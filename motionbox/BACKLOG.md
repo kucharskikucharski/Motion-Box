@@ -1,0 +1,121 @@
+# Motion Box - lista rzeczy do zrobienia
+
+Znaczniki: [x] zrobione  [~] częściowo / placeholder  [ ] do zrobienia  [?] trzeba zdecydować.
+Aktualizowane przy każdej wersji. Powtórzenia z wiadomości są scalone.
+
+## Gotowe w wersji z dzisiaj
+- [x] Zmiana nazwy warstwy dwuklikiem (timeline i Layers); odwołania (matte, IK, ekspresje) idą za nową nazwą
+- [x] Jeden bounding box przy zaznaczonej warstwie (przylega do rysunku, bez ramki wielkości artboardu)
+- [x] Pędzel: grubość linii = Size, kolor = przednia próbka koloru; [ i ] zmieniają rozmiar, przytrzymanie przyspiesza
+- [x] D = kolory domyślne (biały / czarny), X = zamiana kolorów
+- [x] Shift przy przesuwaniu: oś wybierana raz i trzymana
+- [x] Ctrl+C / Ctrl+X / Ctrl+V (wkleja do zaznaczonej warstwy wektorowej, bez zaznaczenia tworzy nową; na pozycję kursora), prawy przycisk na obiekcie: Cut / Copy / Paste / Duplicate / Move to new layer / Delete
+- [x] Ctrl+Z zachowuje zaznaczenie
+- [x] Toolbox na sztywno w jednej kolumnie, brakujące narzędzia w strzałce na dole
+- [x] Prawy przycisk na warstwie: Trim start / end to playhead, Cut at playhead, Remove trim
+- [x] Rigowanie: Object > Create Skeleton from Selection (kości z anchorów i hierarchii, jak Tahoma), Drive by controller (pegi i twarz podążają za joystickiem z mnożnikiem, ujemny = przeciwnie)
+- [x] Klawisze P / R / T / S na timeline pokazują pozycję / rotację / krycie / skalę zaznaczonych warstw (Shift dodaje)
+- [x] Keyframe z ciemnym konturem, powiększa się po najechaniu
+- [x] Footage: Replace (Ctrl+H), Show in file explorer, pytanie o sekwencję (check); Preferences: Clean cache
+
+## Gotowe w poprzedniej wersji (do przeklikania)
+- [x] Warstwy: + w timeline (lub Object > New Layer) pyta Vector / Raster. Kształty i pędzel rysują WEWNĄTRZ warstwy wektorowej (jedna warstwa = wiele obiektów). Raster: pędzel maluje piksele, gumka kasuje, zapis do assets/
+- [x] Anchor point: narzędzie Anchor (Y, w slocie Transform), Ctrl = magnes do rogów / krawędzi / środka / środka artboardu; Object > Reset Anchor Point
+- [x] Magnes przy przesuwaniu (Ctrl): krawędzie i środki innych obiektów oraz artboardu
+- [x] Kości: kontur w własnym kolorze (Properties > Stroke / Fill), staw na początku kości, łańcuch jak w Blenderze (kolejna kość startuje na końcu poprzedniej; Esc lub zmiana narzędzia kończy)
+- [x] Controllery liniowe: Position (strzałki), Rotation (łuk), Position + Rotation; reszta zablokowana. Pola "Label" (podpis nad sliderem / controllerem) w Properties
+- [x] Joysticki: ramka = zaokrąglony kwadrat (XY) lub pigułka (X / Y), bez rotacji, skala tylko proporcjonalna, gałka nie wychodzi poza ramkę
+- [x] Peg (przezroczysty rodzic do skryptów / ekspresji), + Null i + Peg w Schematic
+- [x] Alpha matte: Properties > Track matte (wybór warstwy + Invert). Warstwa-maska znika z widoku i renderu
+- [x] Ekspresje: podpowiedzi przy pisaniu (Tab wstawia, strzałki wybierają), nazwy warstw w layer("...")
+- [x] Render: Ctrl+M / File > Export Render (H.264 mp4 przez ffmpeg, bez ffmpeg: sekwencja PNG)
+- [x] Timeline: numery warstw, linia pokazująca gdzie wyląduje przeciągana warstwa, trim końca z keyframe'm naprawiony, prawy przycisk na warstwie (Group, Fold, Lock, Hide), ukryj / zablokuj grupę naraz, markery (M, dwuklik = tekst i kolor)
+- [x] Zamykanie: pytanie Save / Discard Changes / Cancel; Autosave w Preferences (check + minuty)
+- [x] Nody: podświetlenie celu przy łączeniu, białe podpisy ze skróceniem "..", więcej światła, Fit all, miniatury wszystkich nodów
+- [x] Kursory: ikony narzędzi, kółko pędzla ([ i ] zmieniają rozmiar), strzałki skalowania i łuk rotacji
+- [x] Fill bucket: Fill / Stroke / All (Rect i Lasso: wkrótce), Eyedropper, Scissors (cięcie warstwy na playheadzie), Zoom, Select Whole Level
+- [x] Onion skin: ile klatek wstecz / w przód (prawy przycisk na ikonie cebuli)
+- [x] Kłódki otwierają się i zamykają, okna startowe na środku ekranu, nowy projekt: ikona łańcucha, lista FPS, foldery (assets, graphics, palettes, scenes, scripts, renders, library)
+- [x] Toolbox ze szkicu: 2 kolumny gdy brakuje miejsca (placeholdery: Artboard, Text, Taper, Lipsync, Multiline, IK, Rotate View)
+
+## Z testu rigu oczu - następna runda (w kolejności bólu)
+Pola tekstowe (wszystkie)
+- [ ] Kursor w tekście: klik lub strzałki zdejmują zaznaczenie całości, edycja jednej litery; Ctrl+C / Ctrl+V tekstu ekspresji
+Tworzenie i edycja obiektów
+- [ ] Alt przy rysowaniu kształtu i przy skalowaniu = od środka
+- [ ] Wklejanie warstw na timeline nie przesuwa reszty; nulle / pegi wklejane na środek artboardu (nie pod oryginałem)
+- [ ] Ctrl+Z nie rozrzuca obiektów (zachować układ nodów i stan paneli przy cofaniu)
+- [ ] Pegi z bounding boxem także w stanie niezaznaczonym (jak nulle)
+- [ ] Kolor podpisu (Label) sliderów i joysticków
+- [ ] Narzędzie Animate (zaznacza tylko pegi albo tylko controllery)
+Nody (Schematic)
+- [ ] Miniatury pokazują prawdziwy rysunek warstwy (teraz fioletowy prostokąt)
+- [ ] Zaznaczanie i usuwanie połączeń (kabli) między nodami
+- [ ] Węzeł Table jako korzeń sceny + strzałki kierunku na kablach (co jest rodzicem, a co dzieckiem)
+- [ ] Podpinanie kilku zaznaczonych nodów naraz do jednego rodzica (warstwa z rysunkiem + peg)
+- [ ] Zoom out dalej (teraz do 40%)
+- [ ] Przesuwana belka między viewerem a panelem po prawej (Schematic, Drawing, Expressions)
+Timeline
+- [ ] Zmiana liczby klatek sceny nie wydłuża istniejących warstw
+- [ ] Podświetlone, zaokrąglone krawędzie warstwy przy najechaniu (łatwiejszy trim)
+- [ ] Przesuwanie całej warstwy w czasie (przód / tył)
+- [ ] Parent to... w menu prawego przycisku na warstwie
+Panel Drawing / okno startowe
+- [ ] Stałe koło barw w panelu Drawing (pod paletą), ta sama belka do przesuwania
+- [ ] Okno startowe: równe marginesy lewy / prawy, przycisk Create wyrównany do prawej krawędzi list
+Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive by controller), maska (Track matte)
+
+## Rigging w stylu Duika
+- [x] Create IK (narzędzie bone_ik): klik w dolną kość łańcucha z dwóch kości -> controller na końcu, kości podążają; Properties: Flip IK / Remove IK
+- [ ] Bones -> Controllers jednym kliknięciem (controller na kość, FK)
+- [ ] Przełącznik FK / IK, pole biegunowe (pole) dla kolana / łokcia
+- [ ] Constraints: Orient, Look At, Path
+- [ ] Auto-rig: szablony kończyn (ramię, noga: 2 kości + IK + controller)
+- [ ] Struktury (cała postać), sprężyny i wiggle jako gotowe efekty
+- [ ] IK dla dłuższych łańcuchów (3+ kości)
+
+## Następne (kolejność proponowana)
+1. Próbny rig postaci (Twój test) - zgłoś wszystko, co przeszkadza
+2. Lipsync (patrz niżej)
+3. Footage: widok siatki i listy, wyszukiwarka, nagłówek z informacją o kompozycji (wg Twoich screenów)
+4. Level strip: fixed onion (niebieskie kulki) i ruchome (żółte), tryb "wejdź w level"
+5. Toolbox: Twoje PNG-i, flyouty wg szkicu (Tahoma-style), Taper / Join
+6. Pen + Beziery, Control Point Editor, Multiline
+7. Docki przeciągane jako zakładki
+8. Efekty (panel + nody), FX on/off
+9. Camera + Table w nodach, widok 3D
+10. Precomp, time stretch / repeat / reverse, wideo i audio
+
+## Lipsync (plan na podstawie panelu z Tahomy)
+- Narzędzie Lipsync (ikona dymka) przy zaznaczonej warstwie z fazami ust
+- Okno: źródło dźwięku (plik + Play), pole na tekst (poprawia dokładność), siatka 10 głosek: A I, E, O, U, F V, L, M B P, W Q, C D G K N R S Th Y Z, Rest
+- Każda głoska ma miniaturę fazy i strzałki < > do wyboru, którą fazę pokazać
+- Wynik: warstwa przełącza fazy w czasie (keyframe'y faz)
+- Rozpoznanie głosek z audio: najpierw import pliku danych (Rhubarb / Papagayo), potem opcjonalnie automat
+- Wymaga: odtwarzania audio (pygame.mixer) i mapowania "faza -> klatka" na warstwie
+
+## Pomysły od Ciebie (zapisane)
+- Panel skryptów jak w Tahomie (HKP): wczytywanie skryptów, keyframe na zaznaczonych warstwach [~ przyciski keyframe są]
+- Panel pod timeline: time stretch, repeat, reverse + widok z poziomu precompa
+- Timeline na drugi monitor (wymaga zmiany biblioteki okien, np. Qt)
+- Linijki (Ctrl+R) i guides, Tools w menu ze skrótami [~ menu Tools jest]
+- Anchor + magnes również dla guides i linijek
+- Cut tool na timeline, przyciąganie z Shift (keyframe'y, krawędzie warstw)
+- Work area do renderu (B / N jak w AE), edytowalne skróty (Edit > Keyboard Shortcuts)
+- Opcje ikon widoku w stylu Tahomy, panel 3D
+- Przeprojektowanie okna Load (potrzebny wzór / szkic)
+- Splash: wrzuć nowy PNG na prostokącie do assets/splash.png (układ napisu "Ready to launch" jak dotąd, inny układ opisze assets/splash.json)
+
+## Workflow z Tahomy do odtworzenia (Twoje notatki)
+- Maska oka: Pupil maskowany kształtem oka -> u nas Track matte
+- Pupil_L / Pupil_R -> Pupil_Controller -> Face_Controller (nody)
+- Rozmiar źrenic: Scale = `layer("Pupil_Size_Controller").y` (w Tahomie Col34.y)
+- Blokada osi: wyrażenie `0`; albo gotowy Controller (Position / Rotation / Pos + Rot)
+- Powieki: zielone prostokąty maskowane przez Eye, sterowane przez Eyelid_Controller_UP / _DOWN
+
+## Znane ograniczenia
+- Wersja była testowana tylko na atrapie pygame - błędy zgłaszaj z crash.log
+- Wideo / audio: tylko linki, bez odtwarzania
+- Rect i Lasso dla Fill bucket, Pen, Text, Taper, Lipsync, Artboard, Multiline, IK: placeholdery
+- Raster: bez cofania (Ctrl+Z nie obejmuje pikseli), bez wiaderka
+- Ponowny import tego samego pliku tworzy duplikat
