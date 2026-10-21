@@ -1,0 +1,24 @@
+# Python / Pygame
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+ENV/
+
+# Systemowe pliki tymczasowe
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Edytory i IDE (VS Code, PyCharm, itp.)
+.idea/
+.vscode/
+*.swp
+*.swo
