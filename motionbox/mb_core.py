@@ -3,8 +3,10 @@
 Layout grid: everything is positioned on a 4px / 8px grid (see GRID below).
 """
 import colorsys
+import copy
 import math
 import os
+import re
 import sys
 
 import pygame
@@ -40,7 +42,7 @@ if not os.path.exists(_ex):
 
 GRID = 8
 COLOR_ACCENT = (22, 49, 167)        # #1631A7
-COLOR_ACCENT_L = (60, 110, 225)
+COLOR_ACCENT_L = (36, 66, 200)          # navy - sliders, buttons, checkboxes
 COLOR_NAVY = (40, 72, 205)          # hover outline
 COLOR_BG = (34, 34, 34)
 COLOR_PANEL = (38, 38, 38)
@@ -52,7 +54,7 @@ COLOR_TEXT = (234, 234, 234)
 COLOR_MUTED = (150, 150, 150)
 COLOR_LINE = (58, 58, 58)
 COLOR_TEAL = (0, 170, 160)
-COLOR_PLAYHEAD = (80, 130, 255)     # blue playhead stays
+COLOR_PLAYHEAD = (44, 80, 225)      # navy playhead
 COLOR_THUMB = (79, 79, 79)          # #4F4F4F scrollbar thumb
 COLOR_YELLOW = (240, 190, 60)
 COLOR_HEAD = (28, 28, 28)           # panel header strip, inactive tabs
@@ -101,7 +103,6 @@ TOOL_INFO = {
     "ctrl_rot": ("Rotation Controller", "", "Click to place a controller that only rotates (everything else is locked)."),
     "ctrl_posrot": ("Position + Rotation Controller", "", "Click to place a controller that moves and rotates (scale is locked)."),
     "peg": ("Peg", "", "Click to place a peg: a transform-only parent you can drive with an expression or script."),
-    "artboard": ("Artboard", "", "Coming soon: move and resize the artboard."),
     "select_level": ("Select Whole Level", "", "Click a shape to select every shape of its layer."),
     "multiline": ("Multiline", "", "Coming soon: multi-segment lines."),
     "text": ("Text", "", "Coming soon: text layers."),
@@ -109,24 +110,26 @@ TOOL_INFO = {
     "scissors": ("Cut", "C", "Click a layer to cut it in two at the playhead."),
     "taper": ("Taper / Join", "", "Coming soon: join segments and patch shapes (Tahoma's Taper tool)."),
     "lipsync": ("Lipsync", "", "Coming soon: map phonemes to the drawings of a mouth layer."),
-    "bone_anim": ("Animate Bones", "", "Coming soon: pose and animate bones."),
+    "bone_anim": ("Animate Bones", "", "Drag a bone to rotate it around its joint. Only rotation is animated; length and position stay as you built them."),
+    "bone_edit": ("Edit Skeleton", "", "Drag the ball at the end of a bone to bend / lengthen it, drag the joint at its start to move it. A joint dropped on the end of another bone snaps to it and becomes its child."),
     "bone_ik": ("Create IK", "", "Click the LOWER bone of a two-bone chain: an IK controller appears at its tip - move it and the chain follows."),
+    "animate": ("Animate", "A", "Select and move only pegs or only controllers (choose in the bar at the top); everything else is protected."),
     "zoom": ("Zoom", "Z", "Click to zoom in, Alt+click to zoom out."),
     "view_rotate": ("Rotate View", "", "Coming soon: rotate the artboard view."),
     "joy_x": ("Joystick X", "", "Click to place a joystick limited to the X axis."),
     "joy_y": ("Joystick Y", "", "Click to place a joystick limited to the Y axis."),
     "joy_xy": ("Joystick XY", "", "Click to place a joystick that moves on both axes."),
-    "bone": ("Bone", "J", "Drag to draw a bone. Start the next bone on the end of the last one to chain them."),
+    "bone": ("Create Bones", "J", "Drag to draw a bone. Start the next bone on the end of the last one to chain them."),
     "anchor": ("Anchor Point", "Y", "Drag to move the pivot of the selected object (it rotates and scales around it). Hold Ctrl to snap to the box corners, edges, centre and the artboard centre."),
     "hand": ("Hand", "H", "Drag to pan the view. Scroll to zoom. Home = fit."),
 }
-SLOTS = [["artboard"], ["select", "select_level", "transform", "anchor"], None,
+SLOTS = [["select", "select_level", "transform", "anchor", "animate"], None,
          ["rect", "ellipse", "polygon", "line"], ["pen", "multiline"], ["brush", "eraser"], ["fill"], ["text"], ["eyedropper"], None,
          ["scissors"], ["taper"], ["lipsync"], None,
-         ["joy_x", "joy_y", "joy_xy"], ["ctrl", "ctrl_rot", "ctrl_posrot", "null", "peg"], ["bone", "bone_anim", "bone_ik"], None,
+         ["joy_x", "joy_y", "joy_xy"], ["ctrl", "ctrl_rot", "ctrl_posrot", "null", "peg"], ["bone", "bone_edit", "bone_anim", "bone_ik"], None,
          ["hand", "zoom", "view_rotate"]]
 KEYMAP = {pygame.K_v: "select", pygame.K_t: "transform", pygame.K_r: "rect", pygame.K_b: "brush",
-          pygame.K_e: "eraser", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_y: "anchor", pygame.K_f: "fill", pygame.K_p: "pen", pygame.K_n: "null", pygame.K_j: "bone",
+          pygame.K_e: "eraser", pygame.K_a: "animate", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_y: "anchor", pygame.K_f: "fill", pygame.K_p: "pen", pygame.K_n: "null", pygame.K_j: "bone",
           pygame.K_h: "hand"}
 WORKSPACES = ["Drawing", "Animate", "Schematic", "Fx", "Expressions", "Script"]
 MENU_NAMES = ["File", "Edit", "Object", "Type", "Effects", "View", "Tools", "Panels"]
@@ -203,22 +206,119 @@ def rdiamond(surf, c, size, col, filled=True):
 
 
 _icon_cache = {}
+_icon_index = None
+_icon_unmatched = []
+ICON_ALIASES = {"bone_animation": "bone_anim", "slider_x": "joy_x", "slider_y": "joy_y", "psition_rotation_controller": "ctrl_posrot",
+                "edit_skeleton": "bone_edit", "color_picker": "eyedropper", "control_point_editor": "pen", "fill_bucket": "fill", "paint_bucket": "fill", "bucket": "fill", "controller": "ctrl", "position_controller": "ctrl",
+                "rotation_controller": "ctrl_rot", "position_rotation_controller": "ctrl_posrot", "pos_rot_controller": "ctrl_posrot",
+                "position_and_rotation_controller": "ctrl_posrot", "joystick_x": "joy_x", "joystick_y": "joy_y", "joystick_xy": "joy_xy",
+                "joystick": "joy_xy", "cut": "scissors", "scissor": "scissors", "taper_join": "taper", "taper_tool": "taper",
+                "paperclip": "taper", "paper_clip": "taper", "animate_bones": "bone_anim", "pose_bones": "bone_anim", "bones": "bone",
+                "create_bones": "bone", "edit_bones": "bone_edit", "create_ik": "bone_ik", "ik": "bone_ik", "rotate_view": "view_rotate",
+                "rotate_artboard": "view_rotate", "hand_tool": "hand", "pan": "hand", "select_whole_level": "select_level",
+                "whole_level": "select_level", "free_transform": "transform", "anchor_point": "anchor", "multi_line": "multiline",
+                "rectangle": "rect", "square": "rect", "circle": "ellipse", "oval": "ellipse", "lasso": "lipsync", "speech": "lipsync",
+                "text_tool": "text", "pen_tool": "pen", "brush_tool": "brush", "eraser_tool": "eraser", "zoom_tool": "zoom",
+                "magnifier": "zoom", "color_picker": "eyedropper", "picker": "eyedropper", "animate_tool": "animate", "move": "select",
+                "arrow": "select", "pointer": "select", "line_tool": "line", "triangle": "polygon"}
 
 
-def load_icon(name, size=24):
-    """PNG icon from icons/<name>.png (drawn by you); None if the file does not exist."""
-    key = (name, size)
+def _norm(s):
+    return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+
+def tool_id_for(name):
+    """icons/ file names may use the tool id (ctrl_rot) or its on-screen name (Rotation Controller / rotation_controller)."""
+    n = _norm(name)
+    if n in TOOL_INFO:
+        return n
+    for tid, (title, _, _) in TOOL_INFO.items():
+        if _norm(title) == n:
+            return tid
+    return ICON_ALIASES.get(n)
+
+
+def icon_report():
+    """(tools without any icon, files that matched no tool)"""
+    global _icon_index
+    if _icon_index is None:
+        _icon_index = _build_icon_index()
+    have = {k[0] for k in _icon_index}
+    return [t for t in TOOL_INFO if t not in have], list(_icon_unmatched)
+STATE_WORDS = {"default": "default", "idle": "default", "inactive": "default", "normal": "default", "off": "default",
+               "hover": "hover", "over": "hover", "active": "active", "selected": "active", "pressed": "active", "on": "active"}
+
+
+def _build_icon_index():
+    """Finds icons/<tool>.png and also <tool>_default / _hover / _active (any separator, any case, sub-folders allowed)."""
+    idx = {}
+    for root, _, files in os.walk(ICONS_DIR):
+        dirs = [d for d in os.path.relpath(root, ICONS_DIR).lower().replace("\\", "/").split("/") if d not in (".", "")]
+        for fn in sorted(files):
+            if not fn.lower().endswith(".png"):
+                continue
+            tokens = [t for t in re.split(r"[\s_\-.]+", os.path.splitext(fn)[0].lower()) if t]
+            state = next((STATE_WORDS[t] for t in reversed(tokens + dirs) if t in STATE_WORDS), "any")
+            tid = "_".join(t for t in tokens if t not in STATE_WORDS)
+            real = tool_id_for(tid)
+            if real is None:
+                _icon_unmatched.append(fn)
+                continue
+            idx.setdefault((real, state), os.path.join(root, fn))
+    if _icon_unmatched:
+        print("Motion Box: icon files that match no tool:", ", ".join(_icon_unmatched[:20]))
+    return idx
+
+
+def reset_icon_cache():
+    global _icon_index
+    _icon_cache.clear()
+    _icon_unmatched.clear()
+    _icon_index = None
+
+
+def load_icon_state(name, size=30, state="default"):
+    """(surface, state_specific). 30x30 PNGs are used 1:1, other sizes are scaled."""
+    global _icon_index
+    if _icon_index is None:
+        _icon_unmatched.clear()
+        _icon_index = _build_icon_index()
+    key = (name, size, state)
     if key in _icon_cache:
         return _icon_cache[key]
+    path = _icon_index.get((name, state))
+    specific = path is not None
+    if path is None:
+        path = _icon_index.get((name, "any")) or _icon_index.get((name, "default"))
     surf = None
-    p = os.path.join(ICONS_DIR, name + ".png")
-    if os.path.exists(p):
+    if path:
         try:
-            surf = pygame.transform.smoothscale(pygame.image.load(p).convert_alpha(), (size, size))
+            img = pygame.image.load(path).convert_alpha()
+            surf = img if img.get_size() == (size, size) else pygame.transform.smoothscale(img, (size, size))
         except Exception:  # noqa
             surf = None
-    _icon_cache[key] = surf
-    return surf
+    _icon_cache[key] = (surf, specific)
+    return _icon_cache[key]
+
+
+def cursor_png(kind):
+    """Your own cursor artwork: icons/cursors/<kind>.png or icons/cursor_<kind>.png (resize_v, resize_h, resize_d1, resize_d2, rotate)."""
+    key = ("cursor", kind)
+    if key not in _icon_cache:
+        sf = None
+        for p in (os.path.join(ICONS_DIR, "cursors", kind + ".png"), os.path.join(ICONS_DIR, "cursor_" + kind + ".png")):
+            if os.path.exists(p):
+                try:
+                    sf = pygame.image.load(p).convert_alpha()
+                except Exception:  # noqa
+                    sf = None
+                break
+        _icon_cache[key] = (sf, True)
+    return _icon_cache[key][0]
+
+
+def load_icon(name, size=30):
+    return load_icon_state(name, size, "default")[0]
 
 
 def draw_icon(surf, kind, r, col):
@@ -245,6 +345,10 @@ def draw_icon(surf, kind, r, col):
         rdiamond(surf, (cx, cy), 7, col, False)
     elif kind == "key_f":
         rdiamond(surf, (cx, cy), 7, col, True)
+    elif kind == "key_g":                      # global keyframe: every layer
+        rdiamond(surf, (cx, cy), 6, col, False)
+        d.circle(surf, col, (cx, cy), 11, 1)
+        d.line(surf, col, (cx - 11, cy), (cx + 11, cy), 1)
     elif kind == "key_x":                      # delete keyframes at the playhead
         rdiamond(surf, (cx - 2, cy - 2), 6, col, False)
         d.line(surf, col, (cx + 3, cy + 3), (cx + 9, cy + 9), 2)
@@ -304,6 +408,24 @@ def draw_tool_icon(surf, tid, r, col):
         d.circle(surf, col, (cx, cy), 3)
     elif tid == "ctrl":
         rpoly(surf, col, [(cx + x * 10, cy + y * 10) for x, y in CTRL_SHAPE], 1)
+    elif tid == "peg":
+        d.circle(surf, col, (cx, cy), 8, 2)
+        d.line(surf, col, (cx - 11, cy), (cx + 11, cy), 1)
+        d.line(surf, col, (cx, cy - 11), (cx, cy + 11), 1)
+    elif tid in ("bone_anim", "bone_edit", "bone_ik"):
+        d.line(surf, col, (cx - 8, cy + 8), (cx + 2, cy - 2), 3)
+        d.circle(surf, col, (cx - 9, cy + 9), 3)
+        d.circle(surf, col, (cx + 3, cy - 3), 3)
+        if tid == "bone_ik":
+            d.line(surf, col, (cx + 3, cy - 3), (cx + 9, cy + 3), 3)
+            d.circle(surf, col, (cx + 10, cy + 4), 3, 1)
+        elif tid == "bone_anim":
+            d.arc(surf, col, (cx - 3, cy - 12, 20, 20), 0.2, 1.6, 2)
+        else:
+            d.rect(surf, col, (cx + 5, cy - 10, 6, 6), 1)
+    elif tid == "taper":
+        d.arc(surf, col, (cx - 8, cy - 9, 14, 18), 1.6, 4.9, 2)
+        d.arc(surf, col, (cx - 4, cy - 6, 14, 18), 4.7, 1.6 + 6.28, 2)
     elif tid == "eyedropper":
         d.line(surf, col, (cx - 8, cy + 8), (cx + 2, cy - 2), 3)
         d.circle(surf, col, (cx + 6, cy - 6), 5, 2)
@@ -374,7 +496,7 @@ def ease_t(t, e):
 # ---------------------------------------------------------------- model
 FIELDS = ("name", "kind", "w", "h", "pts", "fill", "fill_on", "fill_a", "stroke_on", "stroke", "stroke_a",
           "stroke_w", "base", "expr", "visible", "locked", "render", "expanded", "label", "node", "phases",
-          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik")
+          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers")
 
 
 class Obj:
@@ -406,6 +528,12 @@ class Obj:
         self.owner = None         # the vector layer this shape belongs to
         self.surf, self.png = None, None      # raster layer pixels / saved png (assets/...)
         self.ik = None            # two-bone IK: {role, other, target, flip}
+        self.caption_color = None
+        self.matte_show = False   # keep the matte layer visible as well
+        self.collapsed = False    # a group (parent) whose children are folded away in the timeline
+        self.rot_limit = None     # bones: (min, max) bend angle in degrees relative to the parent
+        self.sides = 6            # polygon: number of corners
+        self.drivers = []         # controllers this object follows: [{src, k, lag}]
         self.matte, self.matte_inv, self.caption = None, False, ""   # alpha matte layer (name), inverted?, text shown above sliders
 
     def value(self, prop, f):
@@ -448,19 +576,20 @@ class Obj:
         d["ease"] = {str(f): list(e) for f, e in self.ease.items()}
         d["phase_pts"] = {str(f): p for f, p in self.phase_pts.items()}
         d["parent"] = self.parent.name if self.parent else None
-        return d
+        return copy.deepcopy(d)                              # a real copy: never shares dicts / lists with the object
 
     @staticmethod
     def from_dict(d):
         o = Obj(d["name"], d["kind"], 0, 0)
         for k in FIELDS:
             if k in d:
-                setattr(o, k, d[k])
+                setattr(o, k, copy.deepcopy(d[k]))
         for k in ("fill", "stroke"):
             setattr(o, k, tuple(getattr(o, k)))
         o.label = tuple(o.label) if o.label and tuple(o.label) != LABEL_PURPLE else None
         o.limit = tuple(o.limit) if o.limit else None
         o.anchor = tuple(o.anchor)
+        o.caption_color = tuple(o.caption_color) if o.caption_color else None
         o.items = [Obj.from_dict(x) for x in d.get("items", [])]
         for it in o.items:
             it.parent = it.owner = o
@@ -494,7 +623,8 @@ def _raw_pts(o, frame=1):
     if k == "ellipse":
         return [(hw * math.cos(i * math.tau / 40), hh * math.sin(i * math.tau / 40)) for i in range(40)], True
     if k == "polygon":
-        return [(hw * math.sin(i * math.tau / 6), -hh * math.cos(i * math.tau / 6)) for i in range(6)], True
+        n = max(3, int(o.sides))
+        return [(hw * math.sin(i * math.tau / n), -hh * math.cos(i * math.tau / n)) for i in range(n)], True
     if k in ("line", "brush"):
         return [(px * o.w, py * o.h) for px, py in o.pts_at(frame)], bool(o.closed and k == "brush")
     if k == "ctrl":

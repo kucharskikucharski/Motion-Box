@@ -17,6 +17,8 @@ class TimelineMixin:
                     seen.add(o.fold_id)
                     rows.append(("f", o, o.fold_id))
                 continue
+            if o.parent in self.objs and o.parent.collapsed:       # children of a folded group
+                continue
             rows.append(("o", o, None))
             if o.expanded:
                 rows.extend(("p", o, p) for p in PROPS if (o.u_props is None or p in o.u_props) and (not o.u_mode or o.keys[p] or p in o.expr))
@@ -55,6 +57,9 @@ class TimelineMixin:
                 self.txt(label, rc.x + 28, rc.y + 5)
             else:
                 self.txt(label, rc.x + 12, rc.y + 5)
+            if len(it) > 3 and it[3]:                                  # current choice
+                x0, y0 = rc.right - 18, rc.centery
+                pygame.draw.lines(self.screen, COLOR_ACCENT_L, False, [(x0, y0), (x0 + 4, y0 + 4), (x0 + 11, y0 - 5)], 2)
             self.hit(rc, lambda mx, my, fn=fn: self.run_ctx(fn))
 
     def run_ctx(self, fn):
@@ -77,6 +82,28 @@ class TimelineMixin:
         return start
 
     # ---- layer / keyframe interaction helpers
+    def layer_time_drag(self, o, mx0, frame_at):
+        if o not in self.sel:
+            self.select(o)
+        self.goto(frame_at(mx0))
+        cw = max(1.0, self.tl_cw)
+        i0, e0 = o.t_in, o.t_out or self.total
+        keys0 = {p: dict(o.keys[p]) for p in PROPS}
+        ease0, ph0, tout0 = dict(o.ease), list(o.phases), o.t_out
+        last = [0]
+
+        def drag(mx, my):
+            d = int(round((mx - mx0) / cw))
+            d = max(1 - i0, min(self.total - e0, d))               # the layer stays inside the scene
+            if d == last[0]:
+                return
+            last[0] = d
+            o.t_in, o.t_out = i0 + d, (tout0 if d == 0 else e0 + d)
+            o.keys = {p: {max(1, f + d): v for f, v in keys0[p].items()} for p in PROPS}      # keyframes travel with the layer
+            o.ease = {max(1, f + d): e for f, e in ease0.items()}
+            o.phases = [max(1, f + d) for f in ph0]
+        return drag
+
     def marker_click(self, m):
         now = pygame.time.get_ticks()
         if getattr(self, "_mk_last", (None, 0))[0] is m and now - self._mk_last[1] < 400:
@@ -105,15 +132,18 @@ class TimelineMixin:
             r, self.reorder = self.reorder, None
             if r and moved[0]:
                 src, ti, _ = r
-                i = self.objs.index(src)
-                self.objs.remove(src)
-                self.objs.insert(ti - 1 if i < ti else ti, src)
+                group = [x for x in self.objs if x in self.sel] if src in self.sel else [src]      # all selected layers move together
+                ti -= sum(1 for x in group if self.objs.index(x) < ti)
+                for x in group:
+                    self.objs.remove(x)
+                self.objs[ti:ti] = group
         self.drag_end = end
         return drag
 
     def label_menu(self, o, pos):
-        items = [("Use type colour", lambda o=o: setattr(o, "label", None), self.labels[self.label_key(o)])]
-        items += [(n, (lambda c=tuple(c): setattr(o, "label", c)), tuple(c)) for n, c in self.label_list]
+        tg = lambda: (self.sel if o in self.sel else [o])         # noqa  (applies to every selected layer)
+        items = [("Use type colour", lambda: [setattr(t, "label", None) for t in tg()], self.labels[self.label_key(o)])]
+        items += [(n, (lambda c=tuple(c): [setattr(t, "label", c) for t in tg()]), tuple(c)) for n, c in self.label_list]
         self.ctx = {"pos": pos, "items": items}
 
     def toggle_expr(self, o, p):
@@ -281,6 +311,7 @@ class TimelineMixin:
                 ("Edit marker...", lambda: setattr(self, "marker_dlg", m)), ("Delete marker", lambda: self.markers.remove(m))]}), (3,))
 
         shift = lambda: bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)   # noqa
+        used_mattes = {x.matte for x in self.objs if x.matte}
         prev_all = self.push_clip(reg)
         for i, (kind, o, p) in enumerate(rows):
             y = y0 + i * RH - int(self.tl_vy)
@@ -338,7 +369,17 @@ class TimelineMixin:
                 if self.edit and self.edit.get("id") == rid:
                     self.field((tl.x + 128, y + 1, LCW - 124, RH - 4), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
                 else:
-                    self.txt(o.name, tl.x + 132, y + 5)
+                    self.txt(o.name, tl.x + 132 + (12 if o.parent in self.objs else 0), y + 5)
+                if o.name in used_mattes:                          # this layer is the alpha of another layer
+                    self.txt("a", tl.x + LCW - 16, y + 4, self.fb, COLOR_TEAL)
+                    if self.hovering(pygame.Rect(tl.x + LCW - 22, y, 20, RH)):
+                        self.hover_hint = "Alpha matte of: " + ", ".join(x.name for x in self.objs if x.matte == o.name)
+                if any(c.parent is o for c in self.objs):          # a group / parent: fold its children away
+                    gr = pygame.Rect(tl.x + LCW - 40, y + 2, 20, 20)
+                    draw_icon(self.screen, "tri_r" if o.collapsed else "tri_d", gr, (200, 200, 205))
+                    if self.hovering(gr):
+                        self.hover_hint = "Fold / unfold the children of this group"
+                    self.hit(gr, lambda mx, my, o=o: setattr(o, "collapsed", not o.collapsed))
                 self.pop_clip(pcl)
             else:
                 self.rrect(lab, (32, 33, 38), 6)
@@ -357,6 +398,9 @@ class TimelineMixin:
                 lo, hi = o.t_in, o.t_out or self.total      # the bar is the layer's in / out - not its keyframes
                 bar = pygame.Rect(fx(lo), y + 4, (hi - lo + 1) * cw - 1, 16)
                 self.rrect(bar, lc if sel else shade(lc, 0.8), 6)
+                if bar.w > 14:                                       # lit top edge, darker bottom edge
+                    pygame.draw.line(self.screen, mix(lc, (255, 255, 255), 0.28), (bar.x + 6, bar.y + 1), (bar.right - 6, bar.y + 1), 2)
+                    pygame.draw.line(self.screen, shade(lc, 0.62), (bar.x + 6, bar.bottom - 2), (bar.right - 6, bar.bottom - 2), 2)
                 for ph_f in o.phases:                      # new drawing phase: divider + black dot
                     px = fx(ph_f)
                     pygame.draw.line(self.screen, (20, 20, 24), (px, y + 4), (px, y + 20))
@@ -401,12 +445,23 @@ class TimelineMixin:
                            lambda s, o=o, p=p: self.set_expr(o, p, s), f"tlexpr_{o.name}_{p}",
                            hint="Expression - Enter to apply")
             if kind == "o":
-                lo_, hi_ = o.t_in, o.t_out or self.total               # drag the bar ends to trim the layer
-                re_l = pygame.Rect(int(fx(lo_)) - 6, y + 4, 8, 16).clip(cells)
-                re_r = pygame.Rect(int(fx(hi_) + cw) - 2, y + 4, 8, 16).clip(cells)
+                lo_, hi_ = o.t_in, o.t_out or self.total               # drag the bar ends to trim, the bar itself to move the layer
+                bar_r = pygame.Rect(int(fx(lo_)) + 7, y + 4, max(1, int((hi_ - lo_ + 1) * cw) - 14), 16).clip(cells)
+                self.hit(bar_r, lambda mx, my, o=o: self.layer_time_drag(o, mx, frame_at))
+                re_l = pygame.Rect(int(fx(lo_)) - 9, y + 3, 16, 18).clip(cells)
+                re_r = pygame.Rect(int(fx(hi_) + cw) - 7, y + 3, 16, 18).clip(cells)
                 self.tl_edges += [re_l, re_r]
-                if self.hovering(re_l) or self.hovering(re_r):
+                hl, hr = self.hovering(re_l), self.hovering(re_r)
+                if hl or hr:
                     self.hover_hint = "Drag to trim the layer"
+                elif self.hovering(bar_r):
+                    self.hover_hint = "Drag to move the layer in time"
+                if sel or hl or hr or self.hovering(pygame.Rect(cx0, y, area_w, RH)):      # rounded handles on the ends
+                    pc2 = self.push_clip(cells)
+                    for ex, hv in ((fx(lo_) + 1, hl), (fx(hi_) + cw - 7, hr)):
+                        self.rrect((ex - (2 if hv else 0), y + (3 if hv else 6), 6 + (4 if hv else 0), 18 if hv else 12),
+                                   (255, 255, 255) if hv else mix(lc, (255, 255, 255), 0.55), 5)
+                    self.pop_clip(pc2)
                 self.hit(re_l, self.trim_drag(o, True, frame_at))
                 self.hit(re_r, self.trim_drag(o, False, frame_at))
                 kf2 = o.key_frames()

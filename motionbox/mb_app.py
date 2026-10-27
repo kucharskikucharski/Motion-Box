@@ -70,6 +70,11 @@ class AppBase:
         self.autosave = {"on": True, "min": 5}
         self.theme, self.idle_icons, self._ik_depth = "Dark", {}, 0
         self.replace_target, self.seq_dlg, self.clipboard, self.paste_n, self.br_start, self.br_last = None, None, [], 0, {}, 0
+        self.animate_filter, self.split_frac, self.sel_wire, self.hit_clip, self.aux_scroll = "both", 0.5, None, None, 0
+        self.focus_area, self.clip_cut, self.ar_start, self.ar_last, self.rename_dlg = "view", False, {}, 0, None
+        self.prefs_tab, self.pref_q = "General", ""
+        self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
+        self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
         self.fill_opts, self.foot_view, self.foot_q, self.sugg_rects, self.sugg_i = {"target": "fill", "mode": "click"}, "list", "", [], 0
         self.cursor_cache, self.tool_cols = {}, 1
@@ -242,6 +247,8 @@ class AppBase:
         self.ctx = {"pos": pos, "items": [("Group  (Ctrl+G)", self.group_selected), ("Fold layers (pack)", self.fold_selected),
                                           ("Lock / unlock", lambda: self.toggle_flag(o, "locked")),
                                           ("Hide / show", lambda: self.toggle_flag(o, "visible")),
+                                          ("Rename...  (Ctrl+R)", self.open_rename),
+                                          ("Parent to...", lambda: self.parent_menu(o, pos)),
                                           ("Trim start to playhead", lambda: self.trim_to_playhead("in")),
                                           ("Trim end to playhead", lambda: self.trim_to_playhead("out")),
                                           ("Cut at playhead", lambda: self.cut_layer(o.owner or o, self.frame)),
@@ -260,52 +267,52 @@ class AppBase:
         self.msg("Anchor point moved back to the centre")
 
     # ------------------------------------------------------- clipboard (copy / cut / paste)
-    def copy_sel(self):
+    def copy_sel(self, cut=False):
         if not self.sel:
             self.msg("Nothing selected")
             return False
         self.clipboard = []
         for o in self.sel:
             x, y = self.world(o, self.frame)[:2]
-            self.clipboard.append({"d": o.to_dict(), "pos": (x, y), "item": bool(o.owner),
+            self.clipboard.append({"d": o.to_dict(), "pos": (x, y), "item": bool(o.owner), "layer": o.owner.name if o.owner else None,
                                    "surf": o.surf.copy() if o.surf is not None else None})
-        self.paste_n = 0
-        self.msg(f"Copied {len(self.sel)} object(s)")
+        self.paste_n, self.clip_cut = 0, cut
+        self.msg(f"Copied {len(self.sel)} object(s)" if not cut else f"Cut {len(self.sel)} object(s)")
         return True
 
     def cut_sel(self):
-        if self.copy_sel():
+        if self.copy_sel(cut=True):
             self.delete_selected()
-            self.msg("Cut - paste with Ctrl+V (into the selected layer, or into a new one)")
+            self.msg("Cut - select a layer in the timeline and press Ctrl+V")
 
     def paste(self, at=None):
-        """Shapes are pasted into the selected vector layer (a new layer is made when none is selected),
-        at the cursor, so a copy never lands exactly on the original."""
+        """Pasting into the same layer puts the copy 10 px beside the original; into another layer it lands on the same spot.
+        The copy is always a separate object."""
         if not self.clipboard:
             self.msg("The clipboard is empty")
             return
         self.paste_n += 1
-        mp = at or pygame.mouse.get_pos()
-        n = len(self.clipboard)
-        cx = sum(c["pos"][0] for c in self.clipboard) / n
-        cy = sum(c["pos"][1] for c in self.clipboard) / n
-        if self.mode == "main" and self.r_view.collidepoint(mp):
-            ax, ay = self.s2a(*mp)
-            dx, dy = ax - cx, ay - cy
-        else:
-            dx = dy = 24 * self.paste_n
-        p = self.psel                                              # only a layer you selected receives the paste
+        p = self.psel
         lyr = (p.owner or p) if p else None
-        layer = lyr if (lyr and lyr.kind == "vlayer" and not lyr.locked and lyr in self.objs) else None
+        target = lyr if (lyr and lyr.kind == "vlayer" and not lyr.locked and lyr in self.objs) else None
+        src = {c["layer"] for c in self.clipboard if c["item"]}
+        if target is None and src:                                 # nothing selected: back into the layer it came from
+            target = next((o for o in self.objs if o.kind == "vlayer" and o.name in src and not o.locked), None)
+        same = target is not None and target.name in src
+        step = self.paste_n - (1 if self.clip_cut else 0)             # a cut original is gone, so the first paste is in place
+        off = 10 * step if (same or any(not c["item"] for c in self.clipboard)) else 0
         new = []
         for c in self.clipboard:
             o = Obj.from_dict(c["d"])
             o.parent = None
-            wx, wy = c["pos"][0] + dx, c["pos"][1] + dy
+            o.owner = None
+            wx, wy = c["pos"]
+            if o.kind not in ("vlayer", "rlayer"):
+                wx, wy = wx + off, wy + off
             if c["item"] or o.kind in ("rect", "ellipse", "polygon", "line", "brush"):
-                layer = layer or self.new_layer("vlayer")
-                o.parent = o.owner = layer
-                layer.items.insert(0, o)
+                target = target or self.new_layer("vlayer")
+                o.parent = o.owner = target
+                target.items.insert(0, o)
                 self.put_base(o, wx, wy)
             else:
                 o.name = self.unique_name(o.name)
@@ -315,9 +322,9 @@ class AppBase:
                 self.objs.insert(0, o)
             new.append(o)
         self.sel = new
-        if layer:
-            self.active_layer = layer
-        self.msg(f"Pasted {len(new)} object(s)")
+        if target:
+            self.active_layer = target
+        self.msg(f"Pasted {len(new)} object(s)" + (f" into {target.name}" if target else ""))
 
     def move_to_new_layer(self):
         its = [o for o in self.sel if o.owner]
@@ -346,12 +353,58 @@ class AppBase:
                 lyr.t_in, lyr.t_out = 1, None
         self.msg("Layer trimmed" if which != "reset" else "Trim removed")
 
+    def arrow_key(self, k, mods):
+        step = 10 if mods & pygame.KMOD_SHIFT else 1
+        movable = [o for o in self.sel if not o.locked]
+        if self.focus_area == "view" and movable:                       # nudge the selection: 1 px, Shift = 10 px
+            dx = step * ((k == pygame.K_RIGHT) - (k == pygame.K_LEFT))
+            dy = step * ((k == pygame.K_DOWN) - (k == pygame.K_UP))
+            for o in movable:
+                x, y = self.world(o, self.frame)[:2]
+                self.set_world_pos(o, x + dx, y + dy)
+        elif k in (pygame.K_LEFT, pygame.K_RIGHT):                      # after clicking the timeline: step the playhead
+            self.goto(self.frame + (step if k == pygame.K_RIGHT else -step))
+
+    def open_rename(self, mx=0, my=0):
+        targets = [o for o in self.sel if not o.owner]
+        if not targets:
+            self.msg("Select one or more layers in the timeline first")
+            return
+        self.rename_dlg = {"find": "", "repl": "", "suffix_on": True, "suffix": "", "targets": targets}
+
+    def rename_preview(self, d):
+        out = []
+        for n, o in enumerate(d["targets"], 1):
+            new = o.name.replace(d["find"], d["repl"]) if d["find"] else o.name
+            if d["suffix_on"] and d["suffix"]:
+                new += d["suffix"].replace("#", str(n))
+            out.append((o, new))
+        return out
+
+    def apply_rename(self):
+        d, self.rename_dlg = self.rename_dlg, None
+        for o, new in self.rename_preview(d):
+            self.rename_obj(o, new)
+
     def layer_double_click(self, o):
         now = pygame.time.get_ticks()
         last = getattr(self, "_lp_last", (None, 0))
         self._lp_last = (o, now)
         if last[0] is o and now - last[1] < 400:                     # double-click on a layer = rename it
             self.begin_edit(f"rename_{id(o)}", o.name, lambda s, o=o: self.rename_obj(o, s))
+
+    def set_doc(self, attr, v, lo, hi):
+        v = int(clamp(v, lo, hi))
+        if attr == "total" and v > self.total:
+            for o in self.objs:                              # layers keep their length when the scene gets longer
+                if o.t_out is None:
+                    o.t_out = self.total
+        setattr(self, attr, v)
+
+    def parent_menu(self, o, pos):
+        names = [x for x in self.objs if x not in self.sel][:14]
+        self.ctx = {"pos": pos, "items": [("None (unparent)", lambda: [self.unlink(c) for c in self.sel])] +
+                    [(x.name, (lambda x=x: [self.link(c, x) for c in self.sel])) for x in names]}
 
     def rename_obj(self, o, new):
         new = new.strip()
@@ -362,6 +415,9 @@ class AppBase:
             new = self.unique_name(new)
         o.name = new
         for x in self.objs:                                          # keep everything that points at the old name working
+            for d in x.drivers:
+                if d["src"] == old:
+                    d["src"] = new
             if x.matte == old:
                 x.matte = new
             if x.ik:
@@ -369,7 +425,7 @@ class AppBase:
                     if x.ik.get(k) == old:
                         x.ik[k] = new
             for p, ex in list(x.expr.items()):
-                x.expr[p] = ex.replace(f'("{old}")', f'("{new}")')
+                x.expr[p] = ex.replace(f'("{old}"', f'("{new}"')
         self.msg(f"Renamed to {new}")
 
     def find(self, name):
@@ -398,15 +454,15 @@ class AppBase:
             if o.owner:
                 n = Obj.from_dict(o.to_dict())
                 n.parent = n.owner = o.owner
-                n.base["x"] += 24
-                n.base["y"] += 24
+                n.base["x"] += 10
+                n.base["y"] += 10
                 o.owner.items.insert(0, n)
                 new.append(n)
                 continue
             n = Obj.from_dict(o.to_dict())
             n.name, n.parent = self.unique_name(o.name), o.parent
-            n.base["x"] += 24
-            n.base["y"] += 24
+            n.base["x"] += 10
+            n.base["y"] += 10
             self.objs.insert(0, n)
             new.append(n)
         if new:
@@ -460,7 +516,15 @@ class AppBase:
                 L = _L(self.world(ob, f))
                 L.lx, L.ly = self.val(ob, "x", f), self.val(ob, "y", f)
                 return L
-            ns = {"layer": _layer, "t": f, "time": f / self.fps, "value": v, "pi": math.pi, "sin": math.sin, "cos": math.cos,
+            def _layer2(n, lag=0):                            # layer("Name", delay_in_frames).lx .ly .x .y
+                ob = self.find(n)
+                if not ob:
+                    raise ValueError("no object " + n)
+                ff = max(1, f - int(lag))
+                L = _L(self.world(ob, ff))
+                L.lx, L.ly = self.val(ob, "x", ff), self.val(ob, "y", ff)
+                return L
+            ns = {"layer": _layer2, "t": f, "time": f / self.fps, "value": v, "pi": math.pi, "sin": math.sin, "cos": math.cos,
                   "tan": math.tan, "abs": abs, "min": min, "max": max, "sqrt": math.sqrt, "clamp": clamp,
                   "world": _world,
                   "wiggle": lambda fr, am: am * (math.sin(f * fr * .37) + math.sin(f * fr * .91 + 1.3)) / 2}
@@ -732,7 +796,9 @@ class AppBase:
 
     def add_phase(self, o=None):
         o = o or self.psel
-        if not o:
+        o = (o.owner or o) if o else None
+        if not o or o.kind not in ("vlayer", "rlayer"):                 # phases belong to a drawing layer
+            self.msg("Phases live inside a drawing layer - select a vector / raster layer")
             return
         f = self.frame
         if f not in o.phases:
@@ -996,27 +1062,47 @@ class AppBase:
         n = len(self.img_cache) + len(self.scaled_cache) + len(self.ex_thumbs) + len(self.thumb_cache) + len(self.cursor_cache)
         for d in (self.img_cache, self.scaled_cache, self.ex_thumbs, self.thumb_cache, self.cursor_cache, self.idle_icons):
             d.clear()
+        reset_icon_cache()
         self.msg(f"Cache cleaned ({n} items)")
 
     # ------------------------------------------------- rigging helpers (Tahoma / Duik style)
-    def drive_by(self, o, src, k):
-        o.expr["x"] = f'value + layer("{src}").lx * {k:g}'
-        o.expr["y"] = f'value + layer("{src}").ly * {k:g}'
-        self.expr_bad.discard((o.name, "x"))
-        self.expr_bad.discard((o.name, "y"))
-        self.msg(f"{o.name} now follows {src} (x {k:g})")
+    def rebuild_drive(self, o):
+        for a in ("x", "y"):
+            if o.drivers:
+                o.expr[a] = "value" + "".join(f' + layer("{d["src"]}", {d["lag"]}).l{a} * {d["k"]:g}' for d in o.drivers)
+            else:
+                o.expr.pop(a, None)
+            self.expr_bad.discard((o.name, a))
+
+    def drive_by(self, o, src, k, lag=0):
+        """An object may follow several controllers at once; the offsets add up. lag = delay in frames."""
+        d = next((d for d in o.drivers if d["src"] == src), None)
+        if d:
+            d["k"], d["lag"] = k, lag
+        else:
+            o.drivers.append({"src": src, "k": k, "lag": lag})
+        self.rebuild_drive(o)
+        self.msg(f"{o.name} follows {src}: x {k:g}, {lag} frame delay ({len(o.drivers)} controller(s))")
 
     def drive_menu(self, o, pos):
-        srcs = [x for x in self.objs if x is not o and (x.limit or x.kind.startswith("ctrl"))][:12]
+        srcs = [x for x in self.objs if x is not o and (x.limit or x.kind.startswith("ctrl") or x.kind in ("null", "peg"))][:14]
         if not srcs:
-            self.msg("Create a joystick or a controller first")
+            self.msg("Create a joystick, controller, null or peg first")
             return
+        cur = {d["src"]: d for d in o.drivers}
 
-        def pick(src):
-            self.ctx = {"pos": pos, "items": [(f"{src.name}  x {k:g}", (lambda k=k: self.drive_by(o, src.name, k)))
-                                              for k in (1, 0.5, 0.25, -0.25, -0.5, -1)]}
-        self.ctx = {"pos": pos, "items": [(x.name, (lambda x=x: pick(x))) for x in srcs] +
-                    [("Stop following", lambda: [o.expr.pop(a, None) for a in ("x", "y")])]}
+        def pick_lag(src, k):
+            have = cur.get(src.name)
+            self.ctx = {"pos": pos, "items": [(f"delay {n} frames", (lambda n=n: self.drive_by(o, src.name, k, n)), None,
+                                              bool(have) and have["lag"] == n and have["k"] == k) for n in (0, 2, 4, 6, 8, 12)]}
+
+        def pick_k(src):
+            have = cur.get(src.name)
+            self.ctx = {"pos": pos, "items": [(f"{src.name}  x {k:g}", (lambda k=k: pick_lag(src, k)), None, bool(have) and have["k"] == k)
+                                              for k in (1, 0.75, 0.5, 0.25, -0.25, -0.5, -1)]}
+        self.ctx = {"pos": pos, "items": [(x.name + (f"   x {cur[x.name]['k']:g}, {cur[x.name]['lag']}f" if x.name in cur else ""),
+                                          (lambda x=x: pick_k(x)), None, x.name in cur) for x in srcs] +
+                    [("Stop following (all)", lambda: (o.drivers.clear(), self.rebuild_drive(o)))]}
 
     def make_bone(self, start, end, name):
         o = self.new_obj("bone", start[0], start[1], w=1, h=8, select=False)
@@ -1207,7 +1293,9 @@ class AppBase:
         tok = re.search(r"[A-Za-z_]*$", t).group(0)
         if not tok:
             return []
-        return [(w, len(tok), w) for w in EXPR_WORDS if w.lower().startswith(tok.lower()) and w.lower() != tok.lower()][:8]
+        out = [(w, len(tok), w) for w in EXPR_WORDS if w.lower().startswith(tok.lower()) and w.lower() != tok.lower()]
+        out += [(o.name, len(tok), f'layer("{o.name}")') for o in self.objs if o.name.lower().startswith(tok.lower())]   # object names
+        return out[:8]
 
     def apply_suggestion(self, i):
         sg = self.expr_suggestions()
@@ -1344,6 +1432,10 @@ class AppBase:
         by = {o.name: o for o in objs}
         for o, x in zip(objs, d["o"]):
             o.parent = by.get(x.get("parent"))
+        ui = {o.name: (o.node, o.node_open, o.u_mode, o.u_props, o.expanded) for o in self.objs}
+        for o in objs:
+            if o.name in ui:
+                o.node, o.node_open, o.u_mode, o.u_props, o.expanded = ui[o.name]
         old = {o.name: o.surf for o in self.objs if o.kind == "rlayer"}
         for o in objs:
             if o.kind == "rlayer":
@@ -1550,7 +1642,7 @@ class AppBase:
         if self.workspace == "Animate":
             self.r_view = main
         else:
-            half = (main.w - 8) // 2 // 8 * 8
+            half = int(clamp(int((main.w - 8) * self.split_frac) // 8 * 8, 160, max(160, main.w - 8 - 160)))
             self.r_view = pygame.Rect(main.x, TOP, half, ph)
             self.r_aux = pygame.Rect(self.r_view.right + 8, TOP, main.w - half - 8, ph)
         if self.maxi == "timeline" and TL:
@@ -1584,7 +1676,10 @@ class AppBase:
 
     # ------------------------------------------------------------ UI primitives
     def hit(self, rect, fn, buttons=(1,)):
-        self.hits.append((pygame.Rect(rect), fn, buttons))
+        rect = pygame.Rect(rect)
+        if self.hit_clip is not None:
+            rect = rect.clip(self.hit_clip)
+        self.hits.append((rect, fn, buttons))
 
     def push_clip(self, rect):
         prev = self.screen.get_clip()
@@ -1620,7 +1715,7 @@ class AppBase:
             col = shade(color, 1.15) if hov else color
         else:
             col = COLOR_ACCENT if active else (COLOR_HOVER if hov else COLOR_BTN)
-        self.rrect(rect, col, radius)
+        self.rrect(rect, col, rect.h // 2 if label else radius)       # labelled buttons are full pills
         if label:
             self.txt(label, rect.centerx, rect.centery, font or self.f12,
                      (255, 255, 255) if (active or color) else COLOR_TEXT, center=True)
@@ -1660,20 +1755,22 @@ class AppBase:
     def field(self, rect, text, cb, fid, numeric=False, center=False, hint=None):
         rect = pygame.Rect(rect)
         editing = bool(self.edit and self.edit["id"] == fid)
-        self.rrect(rect, COLOR_FIELD, 6)
+        self.rrect(rect, COLOR_FIELD, rect.h // 2)
         if editing:
             self.edit["rect"] = rect
-            self.rrect(rect, COLOR_ACCENT_L, 6, 1)
+            self.rrect(rect, COLOR_ACCENT_L, rect.h // 2, 1)
         s = self.edit["text"] if editing else str(text)
-        if editing and int(time.time() * 2) % 2 == 0:
-            s += "|"
         prev = self.push_clip(rect.inflate(-8, 0))
         w = self.f12.size(s)[0]
         x = rect.centerx - w // 2 if center else rect.x + 8
-        if editing and self.edit.get("fresh") and self.edit["text"]:      # whole value is selected
-            tw = self.f12.size(self.edit["text"])[0]
-            self.rrect((x - 2, rect.centery - 9, tw + 4, 18), COLOR_ACCENT, 4)
+        if editing:
+            self.edit["tx"] = x
+            if self.edit.get("fresh") and s:                        # whole value selected
+                self.rrect((x - 2, rect.centery - 9, w + 4, 18), COLOR_ACCENT, 9)
         self.txt(s, x, rect.centery - 8, self.f12, COLOR_TEXT)
+        if editing and int(time.time() * 2) % 2 == 0 and not self.edit.get("fresh"):
+            cx = x + self.f12.size(s[:self.edit.get("cur", len(s))])[0]
+            pygame.draw.line(self.screen, COLOR_TEXT, (cx, rect.centery - 8), (cx, rect.centery + 8), 1)
         self.pop_clip(prev)
         if self.hovering(rect) and hint:
             self.hover_hint = hint + (" (drag sideways to change the value)" if numeric else "")
@@ -1693,6 +1790,7 @@ class AppBase:
             self.begin_edit(fid, text, cb, True)
             return None
         dec, moved = "." in text, [False]
+        self.wrap_ok = True
 
         def drag(mx, my):
             dx = mx - mx0
@@ -1709,7 +1807,7 @@ class AppBase:
         return drag
 
     def begin_edit(self, fid, text, cb, numeric=False):
-        self.edit = {"id": fid, "text": text, "cb": cb, "numeric": numeric, "fresh": True}
+        self.edit = {"id": fid, "text": text, "cb": cb, "numeric": numeric, "fresh": True, "cur": len(text)}
 
     def commit_edit(self):
         if not self.edit:
@@ -1835,6 +1933,18 @@ class AppBase:
 
     # ------------------------------------------------------------------ events
     def click(self, pos, button):
+        self.wrap_ok, self.wrap_off = False, 0
+        if self.mode == "main":
+            if self.r_tl.collidepoint(pos):
+                self.focus_area = "timeline"                  # arrows now step the playhead
+            elif self.r_view.collidepoint(pos):
+                self.focus_area = "view"                      # arrows now nudge the selection
+        if self.edit and self.edit.get("rect") is not None and self.edit["rect"].collidepoint(pos):   # click inside = place the caret
+            ed = self.edit
+            ed["fresh"] = False
+            tx = ed.get("tx", ed["rect"].x + 8)
+            ed["cur"] = min(range(len(ed["text"]) + 1), key=lambda i: abs(tx + self.f12.size(ed["text"][:i])[0] - pos[0]))
+            return
         if self.edit and self.sugg_rects:                    # expression suggestions
             for rc, i in self.sugg_rects:
                 if rc.collidepoint(pos):
@@ -1847,7 +1957,7 @@ class AppBase:
             self.push_undo()
         if self.eyedrop and button == 1:
             self.eyedrop = False
-            self.picker_set_rgb(tuple(self.screen.get_at(pos))[:3])
+            self.picker_set_rgb(tuple(self.screen.get_at(pos))[:3], self.eyedrop_p)
             return
         self.drag = self.drag_end = None
         for rect, fn, buttons in reversed(self.hits):
@@ -1879,6 +1989,8 @@ class AppBase:
             self.tl_wheel(dy, dx, pos, mods)
         elif self.r_aux and self.workspace == "Schematic" and self.r_aux.collidepoint(pos):
             self.nd_wheel(dy, pos)
+        elif self.r_aux and self.workspace == "Drawing" and self.r_aux.collidepoint(pos):
+            self.aux_scroll = clamp(self.aux_scroll - dy * 40, 0, 420)
         elif self.r_view.collidepoint(pos):
             nz = clamp(self.zoom * (1.1 ** dy), 0.02, 8)
             self.ox = pos[0] - (pos[0] - self.ox) * nz / self.zoom
@@ -1886,6 +1998,8 @@ class AppBase:
             self.zoom, self.view_fit = nz, False
         elif self.r_left.w and self.r_left.collidepoint(pos) and self.left_tab == "Footage":
             self.foot_scroll = int(clamp(self.foot_scroll - dy, 0, max(0, len(self.footage) - 6)))
+        elif self.r_right.w and self.r_right.collidepoint(pos) and self.right_tab == "Properties":
+            self.right_scroll = clamp(self.right_scroll - dy * 40, 0, self.right_max)
         elif self.r_right.collidepoint(pos) and self.right_tab == "Library":
             if self.lib_mode == "Explorer":
                 self.ex_scroll = int(clamp(self.ex_scroll - dy, 0, max(0, self.ex_n - 8)))
@@ -1910,21 +2024,48 @@ class AppBase:
                 self.commit_edit()
             elif ctrl and k == pygame.K_a:
                 ed["fresh"] = True
+            elif ctrl and k in (pygame.K_c, pygame.K_x):
+                self.text_clip = ed["text"]
+                if k == pygame.K_x:
+                    ed["text"], ed["cur"] = "", 0
+            elif ctrl and k == pygame.K_v:
+                if ed["fresh"]:
+                    ed["text"], ed["cur"] = "", 0
+                ins = getattr(self, "text_clip", "")
+                ed["text"] = ed["text"][:ed["cur"]] + ins + ed["text"][ed["cur"]:]
+                ed["cur"], ed["fresh"] = ed["cur"] + len(ins), False
             elif k == pygame.K_ESCAPE:
                 self.edit = None
+            elif k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_HOME, pygame.K_END):
+                ed["fresh"] = False                                   # arrows / click remove the "everything selected" state
+                n, c = len(ed["text"]), ed["cur"]
+                ed["cur"] = max(0, c - 1) if k == pygame.K_LEFT else (min(n, c + 1) if k == pygame.K_RIGHT else (0 if k == pygame.K_HOME else n))
+            elif k == pygame.K_DELETE:
+                if ed["fresh"]:
+                    ed["text"], ed["cur"] = "", 0
+                else:
+                    ed["text"] = ed["text"][:ed["cur"]] + ed["text"][ed["cur"] + 1:]
+                ed["fresh"] = False
             elif k == pygame.K_BACKSPACE:
-                ed["text"], ed["fresh"] = ("" if ed["fresh"] else ed["text"][:-1]), False
+                if ed["fresh"]:
+                    ed["text"], ed["cur"] = "", 0
+                elif ed["cur"] > 0:
+                    ed["text"] = ed["text"][:ed["cur"] - 1] + ed["text"][ed["cur"]:]
+                    ed["cur"] -= 1
+                ed["fresh"] = False
             elif e.unicode and e.unicode.isprintable():
                 if ed["fresh"]:
-                    ed["text"], ed["fresh"] = "", False
+                    ed["text"], ed["cur"] = "", 0
+                ed["fresh"] = False
                 if not ed["numeric"] or e.unicode in "0123456789.,-+":
-                    ed["text"] += e.unicode
+                    ed["text"] = ed["text"][:ed["cur"]] + e.unicode + ed["text"][ed["cur"]:]
+                    ed["cur"] += 1
                     self.sugg_i = 0
             return
         if k == pygame.K_ESCAPE:
             self.dialog, self.link_mode, self.menu_open, self.ctx = None, False, None, None
             self.bone_chain, self.layer_dlg, self.render_dlg, self.quit_dlg, self.marker_dlg = False, False, None, None, None
-            self.replace_target, self.seq_dlg = None, None
+            self.replace_target, self.seq_dlg, self.rename_dlg, self.prefs_open = None, None, None, False
             self.picker, self.flyout, self.eyedrop = None, None, False
             return
         if self.dialog or self.mode != "main":
@@ -1978,14 +2119,15 @@ class AppBase:
         elif k == pygame.K_q:
             self.jump_phase(-1)
         elif k in (pygame.K_DELETE, pygame.K_BACKSPACE):
-            if self.kf_sel and self.r_tl.collidepoint(pygame.mouse.get_pos()):
+            if self.sel_wire is not None and self.workspace == "Schematic":
+                self.unlink(self.sel_wire)
+                self.sel_wire = None
+            elif self.kf_sel and self.r_tl.collidepoint(pygame.mouse.get_pos()):
                 self.delete_keys()
             else:
                 self.delete_selected()
-        elif k == pygame.K_LEFT:
-            self.goto(self.frame - 1)
-        elif k == pygame.K_RIGHT:
-            self.goto(self.frame + 1)
+        elif k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN):
+            self.arrow_key(k, mods)
         elif k == pygame.K_HOME:
             self.view_fit = True
         elif ctrl and k == pygame.K_s:
@@ -1998,6 +2140,8 @@ class AppBase:
             self.group_selected()
         elif ctrl and k == pygame.K_m:
             self.open_render()
+        elif ctrl and k == pygame.K_r:
+            self.open_rename()
         elif ctrl and k == pygame.K_h and self.left_tab == "Footage" and self.foot_sel is not None:
             self.start_replace(self.foot_sel)
         elif not ctrl and k in (pygame.K_p, pygame.K_r, pygame.K_t, pygame.K_s, pygame.K_e, pygame.K_l) \
@@ -2020,7 +2164,15 @@ class AppBase:
             self.btn = e.button
             self.click(e.pos, e.button)
         elif e.type == pygame.MOUSEMOTION and self.drag:
-            self.drag(*e.pos)
+            x, y = e.pos
+            nx = None
+            if self.wrap_ok:                                  # Blender style: dragging past the screen edge wraps around
+                W = self.screen.get_size()[0]
+                nx = W - 3 if x <= 0 else (2 if x >= W - 1 else None)
+            self.drag(x + self.wrap_off, y)
+            if nx is not None:
+                self.wrap_off += x - nx
+                pygame.mouse.set_pos((nx, y))
         elif e.type == pygame.MOUSEBUTTONUP:
             self.release(e.pos, e.button)
         elif e.type == pygame.MOUSEWHEEL:
@@ -2058,6 +2210,14 @@ class AppBase:
                     self.br_last = now
             else:
                 self.br_start.pop(key, None)
+        for key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN):          # holding an arrow repeats it
+            if kp[key] and not self.edit and not self.dialog:
+                held = now - self.ar_start.setdefault(key, now)
+                if held > 400 and now - self.ar_last > 45:
+                    self.arrow_key(key, pygame.key.get_mods())
+                    self.ar_last = now
+            else:
+                self.ar_start.pop(key, None)
         if self.autosave["on"] and self.project_dir and now - self.last_autosave > max(1, self.autosave["min"]) * 60000:
             self.last_autosave = now
             if self.doc_sig() != self.saved_sig:
@@ -2101,6 +2261,7 @@ class AppBase:
         self.draw_prefs()
         self.draw_layer_dlg()
         self.draw_seq_dlg()
+        self.draw_rename_dlg()
         self.draw_render_dlg()
         self.draw_marker_dlg()
         self.draw_picker()
@@ -2128,6 +2289,10 @@ class AppBase:
         def bottom(mx, my):
             self.h_tl = clamp(self.H - 24 - (my + 4), 96, 400)
         specs = []
+        if self.r_aux:                                       # bar between the viewer and the panel next to it
+            def mid(mx, my):
+                self.split_frac = clamp((mx - self.r_view.x) / max(1, self.r_aux.right - self.r_view.x - 8), 0.15, 0.85)
+            specs.append((pygame.Rect(self.r_view.right, TOP, 8, ph), "sizewe", mid))
         if self.r_left.w:
             specs.append((pygame.Rect(self.r_left.right, TOP, 8, ph), "sizewe", left))
         if self.r_right.w:

@@ -8,6 +8,53 @@ import pygame
 
 from mb_core import *            # noqa
 
+def detect_splash_status(img):
+    """Finds the small teal dot and the text beside it (the animated status goes there). Fractions or None."""
+    W, H = img.get_size()
+    teal = set()
+    for y in range(int(H * 0.55), H):
+        for x in range(W):
+            r, g, b, a = img.get_at((x, y))
+            if a > 200 and r < 90 and g > 190 and b > 150:
+                teal.add((x, y))
+    seen, best = set(), None
+    for p in list(teal):
+        if p in seen:
+            continue
+        stack, comp = [p], []
+        seen.add(p)
+        while stack:
+            q = stack.pop()
+            comp.append(q)
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                n = (q[0] + dx, q[1] + dy)
+                if n in teal and n not in seen:
+                    seen.add(n)
+                    stack.append(n)
+        xs, ys = [c[0] for c in comp], [c[1] for c in comp]
+        w, h = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+        if 4 <= w <= 0.03 * W and 4 <= h <= 0.03 * W and len(comp) >= 12:
+            if best is None or max(ys) > best[1] + best[3]:
+                best = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, w, h)
+    if not best:
+        return None
+    cx, cy, w, h = best
+    tx0 = tx1 = None
+    ty0, ty1 = cy, cy
+    for y in range(int(cy - 0.03 * H), int(cy + 0.03 * H)):
+        for x in range(int(cx + w), int(min(W, cx + 0.45 * W))):
+            r, g, b, a = img.get_at((x, y))
+            if r > 170 and g > 170 and b > 170:
+                tx1 = x if tx1 is None or x > tx1 else tx1
+                tx0 = x if tx0 is None or x < tx0 else tx0
+                ty0, ty1 = min(ty0, y), max(ty1, y)
+    right = tx1 if tx1 is not None else cx + 0.15 * W
+    x0, x1 = cx - w - 8, right + 12
+    y0, y1 = min(ty0, cy - h) - 6, max(ty1, cy + h) + 6
+    return {"status": [cx / W, cy / H], "align": "left", "cover": [x0 / W, y0 / H, (x1 - x0) / W, (y1 - y0) / H],
+            "bg": [max(0.0, x0 - 6) / W, cy / H]}
+
+
 INVALID = '/\\:*?"<>|'
 
 
@@ -20,6 +67,7 @@ class StartMixin:
         # a different layout can be described in assets/splash.json
         self.splash_cfg = {"cover": [850 / 1052, 398 / 544, 170 / 1052, 30 / 544], "status": [1000 / 1052, 412 / 544],
                            "bg": [840 / 1052, 412 / 544]}
+        has_json = os.path.exists(os.path.join(ASSETS_DIR, "splash.json"))
         try:
             with open(os.path.join(ASSETS_DIR, "splash.json"), encoding="utf-8") as fh:
                 self.splash_cfg.update(json.load(fh))
@@ -32,6 +80,10 @@ class StartMixin:
             size = (int(w * sc), int(h * sc))
             self.splash_img = pygame.transform.smoothscale(img, size)
             self.splash_sc = size[0] / 1052
+            if not has_json:                                       # follow whatever splash you drop into assets/
+                det = detect_splash_status(self.splash_img)
+                if det:
+                    self.splash_cfg.update(det)
             bx, by = self.splash_cfg["bg"]
             self.splash_bg = tuple(self.splash_img.get_at((int(bx * size[0]), int(by * size[1]))))[:3]
             self.fsplash = pygame.font.SysFont("inter,notosans,dejavusans,ubuntu,liberationsans,arial", max(11, int(16 * self.splash_sc)))
@@ -50,16 +102,23 @@ class StartMixin:
             bg, sc, W, H, cfg = self.splash_bg, self.splash_sc, self.W, self.H, self.splash_cfg
             self.screen.fill(bg)                                   # transparent corners (if any) show as solid colour
             self.screen.blit(self.splash_img, (0, 0))
-            cv = cfg["cover"]
-            self.screen.fill(bg, pygame.Rect(int(cv[0] * W), int(cv[1] * H), int(cv[2] * W), int(cv[3] * H)))
+            cv = cfg.get("cover")
+            if cv:                                              # hides the baked-in status text (set to null to keep it)
+                self.screen.fill(bg, pygame.Rect(int(cv[0] * W), int(cv[1] * H), int(cv[2] * W), int(cv[3] * H)))
             t = (pygame.time.get_ticks() - self.splash_t) / 1000.0
             msgs = ["Loading assets...", "Reading preferences...", "Preparing workspace...",
                     "Starting renderer...", "Ready to launch"]
             sf = self.fsplash.render(msgs[min(len(msgs) - 1, int(t / 0.62))], True, (232, 234, 245))
-            tx, cy = int(cfg["status"][0] * W) - sf.get_width(), int(cfg["status"][1] * H)
-            self.screen.blit(sf, (tx, cy - sf.get_height() // 2))
+            sx, cy = int(cfg["status"][0] * W), int(cfg["status"][1] * H)
             dx = int(math.sin(t * 5) * 5 * sc)                    # the dot sweeps left / right
-            pygame.draw.circle(self.screen, (0, 235, 205), (tx - int(15 * sc) + dx, cy), max(3, int(5 * sc)))
+            if cfg.get("align", "right") == "left":               # status in the bottom-left corner
+                tx = sx + int(18 * sc)
+                dot = (sx + dx, cy)
+            else:
+                tx = sx - sf.get_width()
+                dot = (tx - int(15 * sc) + dx, cy)
+            self.screen.blit(sf, (tx, cy - sf.get_height() // 2))
+            pygame.draw.circle(self.screen, (0, 235, 205), dot, max(3, int(5 * sc)))
         else:
             self.screen.fill((12, 12, 16))
             self.rrect((0, 0, self.W, self.H), COLOR_ACCENT, 32)
@@ -235,7 +294,7 @@ class StartMixin:
     def draw_start_new(self, p):
         np = self.np
         x, y = p.x + 32, p.y + 32
-        fx, fw = x + 112, min(480, p.w - 64 - 112)
+        fx, fw = x + 112, p.w - 64 - 112                    # same space on the left and on the right
         self.txt("Name", x, y + 9)
         self.field((fx, y, fw, 32), np["name"], lambda s: np.__setitem__("name", s), "np_name")
         y += 48
@@ -267,7 +326,7 @@ class StartMixin:
         self.field((fx, y, fw, 32), np["path"], lambda s: np.__setitem__("path", s), "np_path")
         y += 48
         self.txt("The project folder gets: assets, graphics, palettes, scenes, scripts, renders, library", fx, y, self.f11, COLOR_MUTED)
-        self.button((p.right - 16 - 120, p.bottom - 16 - 40, 120, 40), "Create", self.create_from_form,
+        self.button((fx + fw - 120, p.bottom - 16 - 40, 120, 40), "Create", self.create_from_form,
                     color=COLOR_ACCENT_L, radius=20, font=self.fb)
 
     def draw_format_dropdown(self):

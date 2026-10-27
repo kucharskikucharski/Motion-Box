@@ -9,7 +9,7 @@ SHORTCUTS = ["Space            Play / pause", "K                 Set / remove ke
              "V T R B P E N J H  Tools", "Shift (drag)    Axis lock / 45 deg rotation / proportional",
              "Alt + scroll      Zoom timeline", "Scroll (timeline) Up / down through layers",
              "Shift + scroll   Along the time axis", "P R T S (on timeline)  Show position / rotation / opacity / scale",
-             "Ctrl+H           Replace footage", "[ and ]          Brush size", "Ctrl+M           Render (export video)", "U                 Show only the animated properties",
+             "Ctrl+H           Replace footage", "Ctrl+R           Rename selected layers", "Arrows           Nudge selection 1 px (Shift 10) / step playhead after clicking the timeline", "[ and ]          Brush size", "Ctrl+M           Render (export video)", "U                 Show only the animated properties",
              "Shift / Ctrl + click on layers   Range / toggle single layer", "Ctrl+Z / Ctrl+Shift+Z  Undo / redo", "I / O             Work area in / out",
              "Middle drag      Pan timeline / viewport", "`  (backtick)    Fullscreen panel under cursor",
              "Ctrl+S           Save", "Ctrl+A / D / G    Select all / duplicate / group",
@@ -38,37 +38,37 @@ class PanelsMixin:
         y, hidden = top, []
         self.slot_pos = {}
         for i, slot in enumerate(SLOTS):
-            step = 12 if slot is None else 44
+            step = 10 if slot is None else 34                      # 30 px icons, 4 px gap
             if y + step > limit:
                 if slot:
                     hidden.append(slot)
                 continue
-            x = 8
+            x = 13
             if slot is None:
-                pygame.draw.line(self.screen, COLOR_LINE, (x + 4, y + 4), (x + 36, y + 4))
-                y += 12
+                pygame.draw.line(self.screen, COLOR_LINE, (x, y + 4), (x + 30, y + 4))
+                y += 10
                 continue
             tid = self.slot_tool.get(i, slot[0])
-            rc = pygame.Rect(x, y, 40, 40)
+            rc = pygame.Rect(x, y, 30, 30)
             self.slot_pos[i] = rc
             active, hov = self.tool in slot, self.hovering(rc)
-            if active or hov:                       # idle = same colour as the background
+            ic, spec = load_icon_state(tid, 30, "active" if active else ("hover" if hov else "default"))
+            if (active or hov) and not spec:        # idle = same colour as the background
                 self.rrect(rc, COLOR_ACCENT if active else COLOR_HOVER, 8)
-            ic = load_icon(tid, 24)
-            if ic:
-                self.screen.blit(ic if (active or hov) else self.idle_icon(ic), ic.get_rect(center=rc.center))
+            ic, spec = load_icon_state(tid, 30, "active" if active else ("hover" if hov else "default"))
+            if ic:                                  # your own Default / Hover / Active artwork is used as it is
+                self.screen.blit(ic if (spec or active or hov) else self.idle_icon(ic), ic.get_rect(center=rc.center))
             else:
                 draw_tool_icon(self.screen, tid, rc, (235, 235, 235) if (active or hov) else (178, 178, 182))
             if len(slot) > 1:                       # small rounded triangle = hold for more tools
-                rpoly(self.screen, (170, 170, 170), [(rc.right - 4, rc.bottom - 11), (rc.right - 4, rc.bottom - 4),
-                                                     (rc.right - 11, rc.bottom - 4)], 1.2)
+                rpoly(self.screen, (170, 170, 170), [(rc.right - 3, rc.bottom - 9), (rc.right - 3, rc.bottom - 3), (rc.right - 9, rc.bottom - 3)], 1.2)
             if hov:
                 n, k, h = TOOL_INFO[tid]
                 self.hover_hint = f"{n}{' (' + k + ')' if k else ''}: {h}"
             self.hit(rc, lambda mx, my, i=i: self.slot_press(i))
-            y += 44
+            y += 34
         if hidden:
-            ar = pygame.Rect(8, limit, 40, 24)
+            ar = pygame.Rect(13, limit, 30, 24)
             self.flat_button(ar, lambda mx, my, h=hidden, a=ar: self.hidden_tools_menu(h, (a.right + 8, a.y)),
                              "More tools: there is not enough height for all of them")
             draw_icon(self.screen, "tri_d", ar, (200, 200, 205))
@@ -100,8 +100,8 @@ class PanelsMixin:
             it = pygame.Rect(box.x + 4, box.y + 4 + j * 32, 184, 32)
             if self.hovering(it):
                 self.rrect(it, COLOR_HOVER, 8)
-            ic = load_icon(tid, 24)
-            ir = pygame.Rect(it.x + 4, it.y + 4, 24, 24)
+            ic = load_icon_state(tid, 30, "hover" if self.hovering(it) else "default")[0]
+            ir = pygame.Rect(it.x + 2, it.y + 1, 30, 30)
             if ic:
                 self.screen.blit(ic, ir)
             else:
@@ -121,6 +121,8 @@ class PanelsMixin:
 
     # ------------------------------------------------------- colours / picker
     def color_get(self, field):
+        if field == "cap":
+            return (self.psel.caption_color if self.psel and self.psel.caption_color else (230, 230, 235)), 100.0
         if field == "art":
             return self.art_color, 100.0
         if field.startswith("lab:"):
@@ -132,6 +134,10 @@ class PanelsMixin:
 
     def color_set(self, field, rgb, alpha):
         rgb = tuple(rgb)
+        if field == "cap":
+            for o in self.sel:
+                o.caption_color = rgb
+            return
         if field == "art":
             self.art_color = rgb
             return
@@ -167,12 +173,12 @@ class PanelsMixin:
     def close_picker(self):
         self.picker, self.eyedrop = None, False
 
-    def picker_apply(self):
-        p = self.picker
+    def picker_apply(self, p=None):
+        p = p or self.picker
         self.color_set(p["field"], hsv_to_rgb(p["h"], p["s"], p["v"]), p["a"])
 
-    def picker_set_rgb(self, rgb):
-        p = self.picker
+    def picker_set_rgb(self, rgb, p=None):
+        p = p or self.picker
         if not p:
             return
         h, s, v = rgb_to_hsv(rgb)
@@ -197,6 +203,19 @@ class PanelsMixin:
         self.flat_button(cl, lambda mx, my: self.close_picker())
         pygame.draw.line(self.screen, (200, 200, 200), (cl.centerx - 5, cl.centery - 5), (cl.centerx + 5, cl.centery + 5), 2)
         pygame.draw.line(self.screen, (200, 200, 200), (cl.centerx + 5, cl.centery - 5), (cl.centerx - 5, cl.centery + 5), 2)
+        self.picker_body(p, b)
+
+    def ensure_hue_bar(self):
+        if not hasattr(self, "_hue_bar"):
+            t = pygame.Surface((7, 1))
+            for i, c in enumerate([(255, 0, 0), (255, 255, 0), (0, 255, 0), (0, 255, 255), (0, 0, 255), (255, 0, 255), (255, 0, 0)]):
+                t.set_at((i, 0), c)
+            self._hue_bar = rounded_surface(pygame.transform.smoothscale(t, (168, 16)), 8)
+
+    def picker_body(self, p, b):
+        """The colour wheel area (also used permanently inside the Drawing panel)."""
+        x = b.x + 16
+        self.ensure_hue_bar()
         # saturation / value square
         sv = pygame.Rect(x, b.y + 44, 208, 176)
         if p["sv_h"] != p["h"]:
@@ -211,7 +230,7 @@ class PanelsMixin:
         def sv_start(mx, my):
             def u(mx, my):
                 p["s"], p["v"] = clamp((mx - sv.x) / sv.w, 0, 1), 1 - clamp((my - sv.y) / sv.h, 0, 1)
-                self.picker_apply()
+                self.picker_apply(p)
             u(mx, my)
             return u
         self.hit(sv, sv_start)
@@ -221,7 +240,7 @@ class PanelsMixin:
         pygame.draw.circle(self.screen, (255, 255, 255), mk, 8, 3)
         # eyedropper
         ey = pygame.Rect(x, b.y + 242, 32, 32)
-        self.flat_button(ey, lambda mx, my: setattr(self, "eyedrop", True), "Eyedropper: click any pixel on screen",
+        self.flat_button(ey, lambda mx, my: (setattr(self, "eyedrop", True), setattr(self, "eyedrop_p", p)), "Eyedropper: click any pixel on screen",
                          self.eyedrop)
         pygame.draw.line(self.screen, (220, 220, 220), (ey.centerx - 6, ey.centery + 6), (ey.centerx + 3, ey.centery - 3), 3)
         pygame.draw.circle(self.screen, (220, 220, 220), (ey.centerx + 5, ey.centery - 5), 4)
@@ -232,7 +251,7 @@ class PanelsMixin:
         def hue_start(mx, my):
             def u(mx, my):
                 p["h"] = clamp((mx - hb.x) / hb.w, 0, 0.999)
-                self.picker_apply()
+                self.picker_apply(p)
             u(mx, my)
             return u
         self.hit(hb.inflate(0, 12), hue_start)
@@ -255,7 +274,7 @@ class PanelsMixin:
         def a_start(mx, my):
             def u(mx, my):
                 p["a"] = round(clamp((mx - ab.x) / ab.w, 0, 1) * 100)
-                self.picker_apply()
+                self.picker_apply(p)
             u(mx, my)
             return u
         self.hit(ab.inflate(0, 12), a_start)
@@ -266,9 +285,9 @@ class PanelsMixin:
         self.rrect((x, row, 56, 32), COLOR_BTN, 8)
         self.txt("Hex", x + 12, row + 9)
         draw_icon(self.screen, "tri_d", pygame.Rect(x + 36, row + 8, 16, 16), (170, 170, 170))
-        self.field((x + 64, row, 88, 32), rgb_to_hex(cur), lambda s: self.picker_set_rgb(hex_to_rgb(s) or cur),
+        self.field((x + 64, row, 88, 32), rgb_to_hex(cur), lambda s: self.picker_set_rgb(hex_to_rgb(s) or cur, p),
                    "pk_hex", hint="Hex colour, e.g. 1631A7")
-        self.field((x + 160, row, 32, 32), f"{p['a']:.0f}", lambda v: (p.__setitem__("a", clamp(v, 0, 100)), self.picker_apply()),
+        self.field((x + 160, row, 32, 32), f"{p['a']:.0f}", lambda v: (p.__setitem__("a", clamp(v, 0, 100)), self.picker_apply(p)),
                    "pk_a", numeric=True, center=True, hint="Opacity %")
         self.txt("%", x + 196, row + 9, self.f11, COLOR_MUTED)
 
@@ -384,7 +403,17 @@ class PanelsMixin:
         self.tabs(r.x, r.y, [("Properties", 80), ("Layers", 72), ("Library", 72)], self.right_tab,
                   lambda n: setattr(self, "right_tab", n))
         prev = self.push_clip(r)
-        {"Properties": self.draw_properties, "Layers": self.draw_layers, "Library": self.draw_library}[self.right_tab](r)
+        if self.right_tab == "Properties":                          # long panel: scroll with the wheel
+            self.right_scroll = clamp(self.right_scroll, 0, self.right_max)
+            self._content_end = 0
+            self.hit_clip = pygame.Rect(r.x, r.y + 26, r.w, r.h - 26)
+            try:
+                self.draw_properties(pygame.Rect(r.x, r.y - int(self.right_scroll), r.w, r.h))
+            finally:
+                self.hit_clip = None
+            self.right_max = max(0, int(self._content_end + self.right_scroll - (r.bottom - 10)))
+        else:
+            {"Layers": self.draw_layers, "Library": self.draw_library}[self.right_tab](r)
         self.pop_clip(prev)
 
     def toggle_paint(self, field):
@@ -443,7 +472,7 @@ class PanelsMixin:
                                         ("Frames", "total", 1, 10000)):
                 self.txt(label, x, y + 9, self.f11, COLOR_MUTED)
                 self.field((x + 72, y, w - 72, 32), getattr(self, attr),
-                           lambda v, a=attr, lo=lo, hi=hi: setattr(self, a, int(clamp(v, lo, hi))), f"doc_{attr}",
+                           lambda v, a=attr, lo=lo, hi=hi: self.set_doc(a, v, lo, hi), f"doc_{attr}",
                            numeric=True, center=True, hint=f"Document {label.lower()}")
                 y += 40
             self.txt("Objects", x, y + 2, self.f11, COLOR_MUTED)
@@ -452,13 +481,21 @@ class PanelsMixin:
             self.button((x, y, w, 32), "+ Null Control", lambda mx, my: self.new_obj("null", self.aw // 2, self.ah // 2))
             self.button((x, y + 40, w, 32), "+ Box Object", lambda mx, my: self.new_obj("rect", self.aw // 2, self.ah // 2))
             return
-        self.txt("PROPERTIES: " + (o.name if len(self.sel) == 1 else f"{len(self.sel)} objects"), x, y, self.fb)
-        y += 32
-        self.button((x, y, w, 40), "Click a parent..." if self.link_mode else "Link to Parent", self.toggle_link_mode,
-                    color=COLOR_ACCENT_L, radius=20, font=self.fb,
+        th = pygame.Rect(x, y, 112, 62)                                    # what is on the layer
+        if o.kind not in ("vlayer", "rlayer") or o.kind == "rlayer" or o.items:
+            self.node_thumb(o, th)
+        else:
+            self.rrect(th, (22, 22, 24), 6)
+        pcl = self.push_clip((x + 124, y, w - 124, 62))
+        self.txt(o.name if len(self.sel) == 1 else f"{len(self.sel)} objects", x + 124, y + 4, self.fb2)
+        self.pop_clip(pcl)
+        self.txt(f"Frame {self.frame}", x, y + 66, self.f11, COLOR_MUTED)
+        y += 92
+        self.button((x, y, w, 34), "Click a parent..." if self.link_mode else "Link to Parent", self.toggle_link_mode,
+                    color=COLOR_ACCENT_L if self.link_mode else COLOR_BTN, radius=17, font=self.f12,
                     hint="Link: select children, press this, then click the object that should be their parent. "
                          "Children then follow the parent's movement, rotation and scale.")
-        y += 48
+        y += 44
         if o.parent:
             self.txt("Parent: " + o.parent.name, x, y + 6, self.f12)
             self.button((x + w - 64, y, 64, 24), "Unlink", lambda mx, my: self.unlink(o), radius=12)
@@ -474,13 +511,24 @@ class PanelsMixin:
             y += 44
         if self.is_joy(o) or o.kind.startswith("ctrl"):             # name shown above sliders / controllers
             self.txt("Label", x, y + 9, self.f11, COLOR_MUTED)
-            self.field((x + 56, y, w - 56, 32), o.caption, lambda s, o=o: setattr(o, "caption", s), "caption",
+            self.field((x + 56, y, w - 96, 32), o.caption, lambda s, o=o: setattr(o, "caption", s), "caption",
                        hint="Text shown above this slider / controller (what it controls)")
+            csw = pygame.Rect(x + w - 32, y, 32, 32)
+            self.rrect(csw, o.caption_color or (230, 230, 235), 16)
+            self.rrect(csw, (200, 200, 200), 16, 1)
+            if self.hovering(csw):
+                self.hover_hint = "Colour of the label (so it never blends into the background)"
+            self.hit(csw, lambda mx, my: self.open_picker("cap", (self.r_right.x - 248, y)))
             y += 44
         self.divider(x, y, w)
         y += 12
-        self.heading(x, y, "Arrange", "Align to artboard")
+        self.heading(x, y, "Arrange", "Align to")
         y += 28
+        if len(self.sel) >= 2:                                         # two or more objects: align to the artboard or to each other
+            for i, (key, n) in enumerate((("artboard", "Artboard"), ("selection", "Selection"))):
+                self.button((x + i * (w // 2 + 2), y, w // 2 - 2, 26), n, lambda mx, my, key=key: setattr(self, "align_to", key),
+                            active=self.align_to == key, font=self.f11, hint="Align to the artboard, or to the selected objects")
+            y += 32
         gap = (w - 4 * 40) // 3
         for i, kind in enumerate(("left", "bottom", "top", "right")):
             rc = self.flat_button((x + i * (40 + gap), y, 40, 40), lambda mx, my, k=kind: self.align(k),
@@ -496,7 +544,13 @@ class PanelsMixin:
                         hint="Show this layer only where another layer is opaque (alpha matte)")
             self.button((x + w - 64, y, 64, 32), "Invert", lambda mx, my: setattr(o, "matte_inv", not o.matte_inv),
                         active=o.matte_inv, radius=8, hint="Use the opposite of the matte (show where it is transparent)")
-            y += 44
+            y += 40
+            if o.matte:
+                self.checkbox(x, y + 4, o.matte_show, lambda mx, my: setattr(o, "matte_show", not o.matte_show),
+                              "Keep the matte layer visible too (e.g. the eye under the masked iris)")
+                self.txt("Show the matte layer too", x + 28, y + 4)
+                y += 32
+            y += 4
         if not o.owner and not o.kind.startswith("ctrl") and not self.is_joy(o):
             self.button((x, y, w, 32), "Drive by controller...", lambda mx, my, o=o: self.drive_menu(o, (mx, my)), radius=8,
                         hint="Make this layer follow a joystick / controller; a negative multiplier moves the opposite way (pseudo 3D)")
@@ -524,21 +578,33 @@ class PanelsMixin:
             y += 12
             y = self.paint_section(x, y, w, o, "stroke")
             y += 8
-            self.paint_section(x, y, w, o, "fill")
+            y = self.paint_section(x, y, w, o, "fill")
+        self._content_end = max(self._content_end, y)
 
     def align(self, kind):
-        for o in self.sel:
-            x, y, s, _ = self.world(o, self.frame)
-            hw, hh = o.w * s / 2, o.h * s / 2
+        objs = [o for o in self.sel if not o.locked]
+        boxes = {}
+        for o in objs:
+            q = [self.s2a(*p) for p in self.box_pts(o, 0)]
+            boxes[id(o)] = (min(p[0] for p in q), max(p[0] for p in q), min(p[1] for p in q), max(p[1] for p in q))
+        if len(objs) >= 2 and self.align_to == "selection":              # align the objects to each other
+            ref = (min(b[0] for b in boxes.values()), max(b[1] for b in boxes.values()),
+                   min(b[2] for b in boxes.values()), max(b[3] for b in boxes.values()))
+        else:
+            ref = (0, self.aw, 0, self.ah)
+        for o in objs:
+            x1, x2, y1, y2 = boxes[id(o)]
+            x, y = self.world(o, self.frame)[:2]
+            dx = dy = 0.0
             if kind == "left":
-                x = hw
+                dx = ref[0] - x1
             elif kind == "right":
-                x = self.aw - hw
+                dx = ref[1] - x2
             elif kind == "top":
-                y = hh
+                dy = ref[2] - y1
             else:
-                y = self.ah - hh
-            self.set_world_pos(o, x, y)
+                dy = ref[3] - y2
+            self.set_world_pos(o, x + dx, y + dy)
 
     def toggle_link_mode(self, mx=0, my=0):
         self.link_mode = not self.link_mode
@@ -812,7 +878,7 @@ class PanelsMixin:
                        ("Unlink", lambda: [self.unlink(o) for o in self.sel], "", None),
                        ("Lock / Unlock", lambda: [setattr(o, "locked", not o.locked) for o in self.sel], "", None),
                        ("Hide / Show", lambda: [setattr(o, "visible", not o.visible) for o in self.sel], "", None), None,
-                       ("Create Mask", soon("Mask"), "", None), ("Alpha Matte", soon("Alpha Matte"), "", None)],
+                       ("Track Matte (mask)...", lambda: self.matte_menu(self.psel, pygame.mouse.get_pos()) if self.psel else self.msg("Select a layer first"), "", None)],
             "Type": [("Add Text Layer", soon("Text Layer"), "", None), ("Character...", soon("Character"), "", None)],
             "Effects": [(n, soon(n), "", None) for n in ("Blur", "Glow", "Drop Shadow", "Grain", "Tint")] +
                        [None, ("Open Fx Workspace", lambda: setattr(self, "workspace", "Fx"), "", None)],
@@ -870,8 +936,10 @@ class PanelsMixin:
             y += 24
 
     def matte_menu(self, o, pos):
-        names = [x.name for x in self.objs if x is not o][:14]
-        self.ctx = {"pos": pos, "items": [("None", lambda: setattr(o, "matte", None))] + [(n, (lambda n=n: setattr(o, "matte", n))) for n in names]}
+        ok = ("vlayer", "rlayer", "rect", "ellipse", "polygon", "image", "line", "brush", "pill", "rsquare")   # no pegs, nulls, bones, controllers
+        names = [x.name for x in self.objs if x is not o and x.kind in ok][:16]
+        self.ctx = {"pos": pos, "items": [("None", lambda: setattr(o, "matte", None), None, not o.matte)] +
+                    [(n, (lambda n=n: setattr(o, "matte", n)), None, o.matte == n) for n in names]}
 
     def draw_quit_dlg(self):
         q = self.quit_dlg
@@ -933,6 +1001,39 @@ class PanelsMixin:
             self.txt(label, rc.x + 10, rc.y + 5, self.f12)
             self.sugg_rects.append((rc, i))
         self.txt("Tab = insert", box.right - 8, box.bottom - 18, self.f11, COLOR_MUTED, right=True)
+
+    def draw_rename_dlg(self):
+        d = self.rename_dlg
+        if not d:
+            return
+        box = pygame.Rect(0, 0, 520, 360)
+        box.center = (self.W // 2, self.H // 2)
+        self.hit((0, 0, self.W, self.H), lambda mx, my: None, (1, 2, 3))
+        self.rrect(box, (32, 34, 40), 16)
+        self.rrect(box, (70, 70, 78), 16, 1)
+        self.hit(box, lambda mx, my: None, (1, 2, 3))
+        self.txt(f"Rename  ({len(d['targets'])} layer(s))", box.x + 24, box.y + 20, self.f20)
+        self.checkbox(box.right - 130, box.y + 26, d["suffix_on"], lambda mx, my: d.__setitem__("suffix_on", not d["suffix_on"]), "Add the suffix")
+        self.txt("Suffix", box.right - 102, box.y + 26)
+        fx, fw, y = box.x + 110, box.w - 134, box.y + 72
+        self.txt("Replace", box.x + 24, y + 9)
+        self.field((fx, y, fw, 32), d["find"], lambda s: d.__setitem__("find", s), "rn_find", hint="The part of the name to replace")
+        y += 48
+        self.txt("With", box.x + 24, y + 9)
+        self.field((fx, y, fw, 32), d["repl"], lambda s: d.__setitem__("repl", s), "rn_repl", hint="What it becomes")
+        y += 48
+        self.txt("Suffix", box.x + 24, y + 9, color=COLOR_TEXT if d["suffix_on"] else COLOR_MUTED)
+        self.field((fx, y, fw, 32), d["suffix"], lambda s: d.__setitem__("suffix", s), "rn_suffix",
+                   hint="Appended to every name, e.g. _L. A # becomes a running number: _# gives _1, _2, _3")
+        y += 44
+        self.txt("# = running number   (_#  ->  _1, _2, _3)", fx, y, self.f11, COLOR_MUTED)
+        y += 28
+        for o, new in self.rename_preview(d)[:3]:
+            self.txt(f"{o.name}   ->   {new}", box.x + 24, y, self.f11)
+            y += 18
+        by = box.bottom - 24 - 36
+        self.button((box.x + 24, by, 110, 36), "Cancel", lambda mx, my: setattr(self, "rename_dlg", None), radius=18)
+        self.button((box.right - 24 - 130, by, 130, 36), "Confirm", lambda mx, my: self.apply_rename(), color=COLOR_ACCENT_L, radius=18, font=self.fb)
 
     def draw_seq_dlg(self):
         d = self.seq_dlg
@@ -1036,55 +1137,114 @@ class PanelsMixin:
         self.rrect(bar, (50, 50, 56), 6)
         self.rrect((bar.x, bar.y, int(bar.w * (i + 1) / n), bar.h), COLOR_ACCENT_L, 6)
 
+    PREF_SECTIONS = ["General", "Interface", "Labels", "Tools", "Preview", "Onion Skin"]
+
     def draw_prefs(self):
         if not self.prefs_open:
             return
-        box = pygame.Rect(0, 0, 640, 656)
+        box = pygame.Rect(0, 0, 800, min(620, self.H - 24))
         box.center = (self.W // 2, self.H // 2)
-        box.y = max(8, box.y)
         if not self.picker:
             self.hit((0, 0, self.W, self.H), lambda mx, my: setattr(self, "prefs_open", False))
         self.rrect(box, (32, 34, 40), 16)
-        self.rrect(box, (70, 70, 78), 16, 1)
         self.hit(box, lambda mx, my: None)
-        self.txt("Preferences  /  Labels", box.x + 24, box.y + 20, self.f20)
-        self.checkbox(box.right - 320, box.y + 26, self.autosave["on"],
-                      lambda mx, my: (self.autosave.__setitem__("on", not self.autosave["on"]), self.save_prefs()), "Autosave the project")
-        self.txt("Autosave every", box.right - 292, box.y + 26)
-        self.field((box.right - 168, box.y + 20, 56, 28), self.autosave["min"],
-                   lambda v: (self.autosave.__setitem__("min", int(clamp(v, 1, 120))), self.save_prefs()), "autosave_min",
-                   numeric=True, center=True, hint="Minutes between autosaves")
-        self.txt("min", box.right - 100, box.y + 26, self.f11, COLOR_MUTED)
-        self.txt("Label Colors and Names:", box.x + 24, box.y + 56, self.fb)
-        self.txt("Theme", box.x + 330, box.y + 58, self.fb)
+        nav = pygame.Rect(box.x, box.y, 190, box.h)
+        pygame.draw.rect(self.screen, (24, 25, 29), nav, border_top_left_radius=16, border_bottom_left_radius=16)
+        self.rrect(box, (70, 70, 78), 16, 1)
+        self.txt("Preferences", nav.x + 24, nav.y + 22, self.fb2)
+        q, y = self.pref_q.lower(), nav.y + 64
+        for n in self.PREF_SECTIONS:
+            if q and q not in n.lower():
+                continue
+            rc = pygame.Rect(nav.x + 12, y, nav.w - 24, 32)
+            if self.prefs_tab == n:
+                self.rrect(rc, COLOR_ACCENT, 16)
+            elif self.hovering(rc):
+                self.rrect(rc, COLOR_HOVER, 16)
+            self.txt(n, rc.x + 18, rc.y + 8)
+            self.hit(rc, lambda mx, my, n=n: setattr(self, "prefs_tab", n))
+            y += 36
+        self.txt("Search", nav.x + 24, nav.bottom - 84, self.f11, COLOR_MUTED) if False else self.txt("Search", nav.x + 24, nav.bottom - 88, color=COLOR_MUTED)
+        self.field((nav.x + 16, nav.bottom - 62, nav.w - 32, 32), self.pref_q, lambda s: setattr(self, "pref_q", s), "pref_q", hint="Filter the sections")
+        self.button((box.right - 24 - 100, box.bottom - 24 - 36, 100, 36), "Close", lambda mx, my: setattr(self, "prefs_open", False),
+                    color=COLOR_ACCENT_L, radius=18, font=self.fb)
+        area = pygame.Rect(nav.right + 8, box.y + 8, box.w - nav.w - 16, box.h - 16 - 56)
+        pc = self.push_clip(area)
+        x0, y0, w0 = nav.right + 32, box.y + 28, box.w - nav.w - 64
+        sec = self.prefs_tab
+        self.txt(sec, x0, y0, self.f20)
+        y0 += 44
+        getattr(self, "pref_" + sec.lower().replace(" ", "_"))(x0, y0, w0, box)
+        self.pop_clip(pc)
+
+    def pref_general(self, x, y, w, box):
+        self.checkbox(x, y + 4, self.autosave["on"], lambda mx, my: (self.autosave.__setitem__("on", not self.autosave["on"]), self.save_prefs()), "Autosave the project")
+        self.txt("Autosave every", x + 28, y + 4)
+        self.field((x + 160, y - 2, 56, 28), self.autosave["min"], lambda v: (self.autosave.__setitem__("min", int(clamp(v, 1, 120))), self.save_prefs()),
+                   "autosave_min", numeric=True, center=True, hint="Minutes between autosaves")
+        self.txt("min", x + 224, y + 4, self.f11, COLOR_MUTED)
+        self.button((x, y + 52, 140, 32), "Clean cache", self.clean_cache, hint="Forget cached images, thumbnails and cursors (rebuilt when needed)")
+
+    def pref_interface(self, x, y, w, box):
+        self.txt("Theme", x, y + 8)
         for i, tn in enumerate(THEMES):
-            self.button((box.x + 384 + i * 58, box.y + 52, 54, 26), tn, lambda mx, my, tn=tn: self.set_theme(tn), active=self.theme == tn,
-                        radius=13, font=self.f11, hint="Interface theme")
+            self.button((x + 70 + i * 86, y, 80, 30), tn, lambda mx, my, tn=tn: self.set_theme(tn), active=self.theme == tn, font=self.f11, hint="Interface theme")
+
+    def pref_labels(self, x, y, w, box):
+        self.txt("Label colours and names:", x, y - 6, self.fb)
+        y += 24
         for i, (name, c) in enumerate(self.label_list):
-            x, y = box.x + 24 + (i // 8) * 300, box.y + 80 + (i % 8) * 36
-            sw = pygame.Rect(x, y, 32, 28)
-            self.rrect(sw, c, 6)
-            self.rrect(sw, (200, 200, 200), 6, 1)
+            lx, ly = x + (i // 8) * 280, y + (i % 8) * 34
+            sw = pygame.Rect(lx, ly, 30, 26)
+            self.rrect(sw, c, 13)
+            self.rrect(sw, (200, 200, 200), 13, 1)
             if self.hovering(sw):
                 self.hover_hint = "Click to change this label colour"
             self.hit(sw, lambda mx, my, i=i: self.open_picker(f"lab:{i}", (box.right + 8, box.y + 8)))
-            self.field((x + 40, y, 236, 28), name, lambda s, i=i: self.set_label_name(i, s), f"labname_{i}")
-        y = box.y + 80 + 8 * 36 + 8
-        self.button((box.x + 24, y, 130, 32), "Reset Labels", self.reset_labels, radius=8)
-        y += 56
-        self.txt("Element types use these labels (click to cycle):", box.x + 24, y, self.fb)
-        y += 32
+            self.field((lx + 38, ly, 196, 26), name, lambda s, i=i: self.set_label_name(i, s), f"labname_{i}")
+        y += 8 * 34 + 6
+        self.button((x, y, 130, 30), "Reset Labels", self.reset_labels, font=self.f11)
+        y += 44
+        self.txt("Element types use these labels (click to cycle):", x, y, self.fb)
+        y += 28
         for j, (key, name) in enumerate(LABEL_NAMES.items()):
-            x, yy = box.x + 24 + (j // 4) * 300, y + (j % 4) * 36
-            self.txt(name, x, yy + 7)
+            lx, ly = x + (j // 4) * 280, y + (j % 4) * 34
+            self.txt(name, lx, ly + 6)
             idx = self.type_label[key]
-            b = self.button((x + 120, yy, 156, 28), "", lambda mx, my, k=key: self.cycle_type_label(k), radius=8)
-            pygame.draw.circle(self.screen, self.label_list[idx][1], (b.x + 16, b.centery), 7)
-            self.txt(self.label_list[idx][0], b.x + 32, b.y + 7)
-        self.button((box.x + 24, box.bottom - 24 - 32, 130, 32), "Clean cache", self.clean_cache, radius=16,
-                    hint="Forget cached images, thumbnails and cursors (they are rebuilt when needed)")
-        self.button((box.right - 24 - 96, box.bottom - 24 - 32, 96, 32), "Close",
-                    lambda mx, my: setattr(self, "prefs_open", False), color=COLOR_ACCENT_L, radius=16)
+            b = self.button((lx + 108, ly, 150, 26), "", lambda mx, my, k=key: self.cycle_type_label(k), radius=13)
+            pygame.draw.circle(self.screen, self.label_list[idx][1], (b.x + 14, b.centery), 6)
+            self.txt(self.label_list[idx][0], b.x + 28, b.y + 5)
+
+    def pref_tools(self, x, y, w, box):
+        self.txt("All tools (drag & drop toolbox building is coming):", x, y - 6, self.f11, COLOR_MUTED)
+        y += 24
+        for i, tid in enumerate(TOOL_INFO):
+            cell = pygame.Rect(x + (i % 6) * 88, y + (i // 6) * 84, 80, 76)
+            self.rrect(cell, COLOR_BTN if not self.hovering(cell) else COLOR_HOVER, 12)
+            ic = load_icon_state(tid, 30, "default")[0]
+            ir = pygame.Rect(0, 0, 30, 30)
+            ir.center = (cell.centerx, cell.y + 26)
+            if ic:
+                self.screen.blit(ic, ir)
+            else:
+                draw_tool_icon(self.screen, tid, ir, (235, 235, 235))
+            pcl = self.push_clip(cell)
+            self.txt(TOOL_INFO[tid][0], cell.centerx, cell.bottom - 16, self.f11, COLOR_MUTED, center=True)
+            self.pop_clip(pcl)
+            if self.hovering(cell):
+                self.hover_hint = TOOL_INFO[tid][2]
+
+    def pref_preview(self, x, y, w, box):
+        self.checkbox(x, y + 4, self.loop, lambda mx, my: self.toggle_loop(), "Loop playback")
+        self.txt("Loop playback", x + 28, y + 4)
+        self.txt("More preview options (cache, frame skipping) will live here.", x, y + 44, self.f11, COLOR_MUTED)
+
+    def pref_onion_skin(self, x, y, w, box):
+        for i, (key, n) in enumerate((("before", "Previous frames"), ("after", "Next frames"))):
+            self.txt(n, x, y + i * 44 + 8)
+            self.field((x + 150, y + i * 44, 64, 32), self.onion[key], lambda v, key=key: self.onion.__setitem__(key, int(clamp(v, 0, 12))),
+                       f"onion_{key}", numeric=True, center=True, hint="How many frames are shown")
+        self.txt("Turn onion skin on with the icon above the viewport (right-click it for quick counts).", x, y + 100, self.f11, COLOR_MUTED)
 
     def run_menu(self, fn):
         self.menu_open = None

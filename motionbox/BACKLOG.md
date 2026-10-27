@@ -119,3 +119,17 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - Rect i Lasso dla Fill bucket, Pen, Text, Taper, Lipsync, Artboard, Multiline, IK: placeholdery
 - Raster: bez cofania (Ctrl+Z nie obejmuje pikseli), bez wiaderka
 - Ponowny import tego samego pliku tworzy duplikat
+
+## Z ostatniej rundy (do zrobienia)
+- [ ] Zaznaczanie klatek na warstwie (Shift + klik: zakres), przenoszenie zaznaczenia (czerwone = zakaz upuszczenia na warstwę z rysunkami), wytnij / wklej / podmień / usuń klatki
+- [ ] Przeciąganie phase'ów z Level Strip na timeline (wstawianie lub podmiana, także na zaznaczony zakres klatek)
+- [ ] Tryb izolacji po kliknięciu miniatury w Level Strip (odtwarzanie, rysowanie z onion skin)
+- [ ] Toolbox budowany przez przeciąganie ikon (Preferences > Tools): na razie lista narzędzi z nazwami
+- [x] Preferences w działach (General, Interface, Labels, Tools, Preview, Onion Skin) + Search
+- [x] Properties: miniatura warstwy, mniejszy przycisk Link to Parent
+- [x] Kopiuj / wklej: kopia w tej samej warstwie +10 px, w innej warstwie w tym samym miejscu, zawsze osobny obiekt
+- [x] Strzałki przesuwają zaznaczenie o 1 px (Shift 10); po kliknięciu timeline sterują playheadem
+- [x] Rename wielu warstw (Ctrl+R): zastąp + sufiks (_# = numer kolejny)
+- [x] Ikony narzędzi w stanach Default / Hover / Active (np. select_default.png, select_hover.png, select_active.png)
+- [x] Splash: animowany status znajdowany automatycznie przy kropce (lewy dolny róg także)
+- [x] Znacznik "a" na warstwie, która jest alfą innej; opcja "Show the matte layer too"
