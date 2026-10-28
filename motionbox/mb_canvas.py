@@ -303,13 +303,8 @@ class CanvasMixin:
             else:
                 self.msg("Click the lower bone of a two-bone chain")
             return
-        if tool == "bone_anim":                                  # click the bone or any drawing that follows it: the bone rotates
-            b = self.pick_bone(mx, my)
-            if b:
-                self.sel = [b]
-                return self.start_rotate(b)
-            self.msg("Animate Bones: click a bone, or a drawing that is parented to a bone")
-            return
+        if tool == "bone_anim":
+            return self.bone_anim_click(mx, my)
         if tool in ("pen", "multiline", "text", "taper", "lipsync", "view_rotate"):
             self.msg(f"{TOOL_INFO[tool][0]}: coming soon")
             return
@@ -321,7 +316,12 @@ class CanvasMixin:
             ax_, ay_ = self.a2s(wx, wy)
             if math.hypot(mx - ax_, my - ay_) <= 6:                    # the little cross is the anchor point
                 return self.start_anchor(mx, my)
-        hh = self.handle_hit(mx, my)
+        rc_ = next((c for c in self.sel if c.kind == "ctrl_rot" and not c.locked), None)
+        if rc_ is not None and tool in ("select", "transform", "animate"):
+            pk = self.pick(mx, my)
+            if pk is None or pk is rc_:                              # a rotation controller turns when you drag from anywhere
+                return self.start_rotate(rc_, key=self.auto_key)
+        hh = self.handle_hit(mx, my) if not (self.psel and self.psel.kind == "bone") else None
         if hh:
             if hh[0] == "tip":
                 return self.start_tip(self.psel)
@@ -340,6 +340,12 @@ class CanvasMixin:
         if shift:
             self.select(o, add=True)
             return
+        if o.kind == "bone":                                         # Select only selects bones (Delete removes them)
+            self.sel = [o] if o not in self.sel else self.sel
+            return
+        if o.kind == "ctrl_rot":
+            self.sel = [o]
+            return self.start_rotate(o, key=self.auto_key)
         if o not in self.sel:
             self.sel = [o]
         return self.start_move(mx, my)
@@ -461,7 +467,7 @@ class CanvasMixin:
             self.set_world_pos(o, wx + (cl[0] * ca - cl[1] * sa) * s, wy + (cl[0] * sa + cl[1] * ca) * s)
         return drag
 
-    def start_rotate(self, o):
+    def start_rotate(self, o, key=False):
         wx, wy, _, _ = self.world(o, self.frame)
         r0 = o.value("rotation", self.frame)
         ax0, ay0 = self.s2a(*pygame.mouse.get_pos())
@@ -473,7 +479,10 @@ class CanvasMixin:
             v = r0 + math.degrees(math.atan2(ay - wy, ax - wx) - a0)
             if pygame.key.get_mods() & pygame.KMOD_SHIFT:      # 45 degree steps
                 v = round(v / 45) * 45
-            self.set_prop(o, "rotation", round(v, 1))
+            if key and "rotation" not in self.locked_props(o) and not o.locked:     # Animate Bones always writes a keyframe
+                o.keys["rotation"][int(self.frame)] = round(v, 1)
+            else:
+                self.set_prop(o, "rotation", round(v, 1))
 
         def end():
             self.rotating = False
@@ -586,6 +595,36 @@ class CanvasMixin:
         self.field((cx + 36, v.y + 12, 48, 24), self.brush_px, lambda val: setattr(self, "brush_px", int(clamp(val, 1, 200))),
                    "brush_px", numeric=True, center=True, hint="Brush size for raster layers")
 
+    def bone_anim_click(self, mx, my):
+        """A bone and every drawing that follows it are ONE element. Click any of them: the bone gets the keyframe."""
+        ax, ay = self.s2a(mx, my)
+        if pygame.key.get_mods() & pygame.KMOD_SHIFT:              # Shift + click on a joint: pin / unpin it
+            for b in self.objs:
+                if b.kind == "bone":
+                    jx, jy = self.world(b, self.frame)[:2]
+                    if math.hypot(jx - ax, jy - ay) * self.zoom <= 10:
+                        b.pin = not b.pin
+                        self.msg(f"Joint {b.name} {'pinned (rotation locked)' if b.pin else 'unpinned'}")
+                        return
+        o = self.pick(mx, my)
+        if o and (o.kind.startswith("ctrl") or o.limit):          # IK controllers and joysticks are animated with the same tool
+            self.sel = [o]
+            return self.start_rotate(o, key=True) if o.kind == "ctrl_rot" else self.start_move(mx, my)
+        b = self.pick_bone(mx, my)
+        if not b:
+            self.msg("Animate Bones: click a bone, an IK controller or a drawing that follows a bone")
+            return
+        if b.ik:                                                     # a limb with IK is posed by its controller
+            c = self.find(b.ik.get("target") or "")
+            if c:
+                self.sel = [c]
+                return self.start_move(mx, my)
+        if b.pin:
+            self.msg(f"{b.name} is pinned - Shift+click its joint to unpin")
+            return
+        self.sel = [b]
+        return self.start_rotate(b, key=True)
+
     def pick_bone(self, mx, my):
         o = self.pick(mx, my)
         o = (o.owner or o) if o else None
@@ -596,8 +635,6 @@ class CanvasMixin:
     def tool_filter(self, o):
         if self.tool in ("bone_ik", "bone_edit"):                # the bone tools only ever touch bones
             return o.kind == "bone"
-        if self.tool in ("select", "transform") and o.kind == "bone":
-            return False                                          # Select moves drawings, pegs and nulls, never bones
         if self.tool != "animate":
             return True
         isp = o.kind == "peg"
@@ -641,6 +678,8 @@ class CanvasMixin:
         if o and o not in self.sel:
             self.sel = [o]
         items = []
+        if o and (o.owner or o).kind == "vlayer":
+            items.append(("Edit drawing without the rig", lambda: self.enter_rest_edit(o)))
         if self.sel:
             items += [("Cut  (Ctrl+X)", self.cut_sel), ("Copy  (Ctrl+C)", self.copy_sel)]
         items.append(("Paste  (Ctrl+V)", lambda: self.paste((mx, my))))
@@ -795,7 +834,7 @@ class CanvasMixin:
             return self.a2s(*self.xf(x, y, s, rot, px, py))
 
         def seg(a, b):
-            d.line(self.screen, col, P(*a), P(*b), 2)
+            d.line(self.screen, col, P(*a), P(*b), 4)
         k = o.kind
         tip = R * (0.62 if k == "ctrl_posrot" else 0.95)
         if k in ("ctrl", "ctrl_posrot"):
@@ -807,14 +846,14 @@ class CanvasMixin:
                     seg((c * tip, sn * tip), (c * tip + math.cos(a2) * 0.26 * R, sn * tip + math.sin(a2) * 0.26 * R))
         if k in ("ctrl_rot", "ctrl_posrot"):
             rr = R * (0.92 if k == "ctrl_posrot" else 0.8)
-            d.lines(self.screen, col, False, [P(rr * math.cos(math.radians(a)), rr * math.sin(math.radians(a))) for a in range(-150, 71, 10)], 2)
+            d.lines(self.screen, col, False, [P(rr * math.cos(math.radians(a)), rr * math.sin(math.radians(a))) for a in range(-150, 71, 10)], 4)
             ae = math.radians(70)
             ex, ey, tg = rr * math.cos(ae), rr * math.sin(ae), math.atan2(math.cos(ae), -math.sin(ae))
             for da in (150, -150):
                 a2 = tg + math.radians(da)
                 seg((ex, ey), (ex + math.cos(a2) * 0.26 * R, ey + math.sin(a2) * 0.26 * R))
         cx, cy = self.a2s(x, y)
-        d.circle(self.screen, col, (int(cx), int(cy)), 2)
+        d.circle(self.screen, col, (int(cx), int(cy)), 4)
 
     def draw_tree(self, o, f=None, ghost=None):
         f = f or self.frame
@@ -899,6 +938,9 @@ class CanvasMixin:
             for lx_ in (0, o.w):
                 jx, jy = self.a2s(*self.xf(x, y, s, rot, lx_, 0))
                 pygame.draw.circle(self.screen, o.stroke, (int(jx), int(jy)), max(3, int(5 * self.zoom * s)), 2)
+                if lx_ == 0 and o.pin:                               # pinned joint: a small yellow square
+                    pygame.draw.rect(self.screen, (255, 205, 60), (int(jx) - 5, int(jy) - 5, 10, 10))
+                    pygame.draw.rect(self.screen, (40, 40, 40), (int(jx) - 5, int(jy) - 5, 10, 10), 1)
 
     def draw_image(self, o, f, x, y, s, rot, op):
         sf = self.footage_surface(o, f)
@@ -943,7 +985,7 @@ class CanvasMixin:
         pygame.draw.rect(self.screen, self.art_color, ab)
         src = self.matte_sources()
         for o in reversed(self.objs):
-            if o.visible and self.in_range(o) and o.name not in src and not (self.view["render"] and not o.render):
+            if o.visible and self.in_range(o) and o.name not in src and not (self.view["render"] and not o.render) and (self.rest_layer is None or o is self.rest_layer):
                 self.draw_layer(o)
                 if o.caption:                                  # slider / controller name above the object
                     bp = self.box_pts(o, 6)
@@ -998,7 +1040,7 @@ class CanvasMixin:
                     self.rrect((cx - 7, cy - 7, 14, 14), bb, 2, 1)           # square around the cross: the anchor is easy to spot
         # hover: navy outline + name tag
         h = self.hover
-        if h and h.visible and (h.kind != "vlayer" or h.items) and h.kind != "rlayer":
+        if h and h.visible and (h.kind != "vlayer" or h.items) and h.kind != "rlayer" and not h.kind.startswith("ctrl"):
             bp = self.layer_union(h, 3) if h.kind == "vlayer" else self.box_pts(h, 3)
             pygame.draw.polygon(self.screen, COLOR_NAVY, bp, 2)
             lab = self.f11.render(h.owner.name if h.owner else h.name, True, (255, 255, 255))      # the layer's own name
@@ -1024,6 +1066,11 @@ class CanvasMixin:
             self.draw_fill_opts(v)
         elif self.tool == "animate":
             self.draw_animate_opts(v)
+        if self.rest_layer is not None:                              # drawing view banner
+            self.rrect((v.x + 8, v.y + 8, 430, 34), (30, 30, 34), 17)
+            self.txt(f"Drawing view: {self.rest_layer.name} (no rig, no animation)", v.x + 20, v.y + 17, self.f11)
+            self.button((v.x + 346, v.y + 12, 86, 26), "Exit (Esc)", lambda mx, my: setattr(self, "rest_layer", None), font=self.f11,
+                        hint="Back to the rig view")
 
     def draw_view_icons(self, v):
         """View toggles in the top-right corner of the viewport."""
@@ -1189,11 +1236,12 @@ class CanvasMixin:
                 for oo in self.sel:
                     self.node_rect(oo)
                     items.append((oo, oo.node[0], oo.node[1]))
-                mx0, my0 = mx, my
+                mx0, my0, ox0, oy0 = mx, my, self.nd_ox, self.nd_oy
+                self.autoscroll = "nodes"
 
                 def mv(mx, my):
                     for oo, x0, y0 in items:
-                        oo.node = [x0 + (mx - mx0) / self.nd_zoom, y0 + (my - my0) / self.nd_zoom]
+                        oo.node = [x0 + ((mx - mx0) - (self.nd_ox - ox0)) / self.nd_zoom, y0 + ((my - my0) - (self.nd_oy - oy0)) / self.nd_zoom]
                 return mv
         wo = self.wire_at(mx, my)
         self.sel_wire = wo                                        # click a wire to select it (Delete disconnects)

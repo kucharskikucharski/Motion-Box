@@ -29,9 +29,9 @@ class TimelineMixin:
                     rows.append(("f", o, o.fold_id))
             else:
                 rows.append(("o", o, None))
-                if o.expanded:
+                if o.expanded:                               # the arrow shows its properties and, below them, the layers parented to it
                     rows.extend(("p", o, p) for p in PROPS if (o.u_props is None or p in o.u_props) and (not o.u_mode or o.keys[p] or p in o.expr))
-            if not o.collapsed:                             # a folded parent hides its children
+            if o.expanded:
                 for c in self.objs:
                     if c.parent is o:
                         walk(c)
@@ -39,6 +39,8 @@ class TimelineMixin:
             if o.parent is None or o.parent not in self.objs:
                 walk(o)
         for o in self.objs:                                  # safety net
+            if id(o) not in done and o.parent in self.objs and not o.parent.expanded:
+                continue                                      # hidden inside a collapsed parent
             walk(o)
         return rows
 
@@ -133,6 +135,7 @@ class TimelineMixin:
         self.layer_click(o)
         self.layer_double_click(o)
         moved = [False]
+        self.autoscroll = "tl"
 
         def drag(mx, my):                                   # drag a layer name up / down; a line shows where it will land
             if abs(my - my0) < 6 and not moved[0]:
@@ -143,11 +146,32 @@ class TimelineMixin:
                 return
             rel = my - y0 + self.tl_vy
             idx = int(clamp(rel // RH, 0, len(rws) - 1))
-            lower = (rel % RH) > RH / 2
-            self.reorder = (o, self.objs.index(rws[idx][1]) + (1 if lower else 0), y0 + idx * RH - int(self.tl_vy) + (RH if lower else 0))
+            frac = (rel % RH) / RH
+            tgt = rws[idx]
+            grp = [x for x in self.objs if x in self.sel] if o in self.sel else [o]
+            anc, p = [], tgt[1]
+            while p is not None:
+                anc.append(p)
+                p = p.parent
+            if 0.25 < frac < 0.75 and tgt[0] == "o" and not any(x in anc for x in grp):
+                self.parent_drop, self.reorder = (tgt[1], y0 + idx * RH - int(self.tl_vy)), None       # the whole row lights up: drop = child of it
+                return
+            self.parent_drop = None
+            lower = frac > 0.5
+            self.reorder = (o, self.objs.index(tgt[1]) + (1 if lower else 0), y0 + idx * RH - int(self.tl_vy) + (RH if lower else 0))
 
         def end():
             r, self.reorder = self.reorder, None
+            pd, self.parent_drop = self.parent_drop, None
+            if pd and moved[0]:
+                group = [x for x in self.objs if x in self.sel] if o in self.sel else [o]
+                n = 0
+                for x in group:
+                    if x is not pd[0] and self.link(x, pd[0], quiet=True) is not False:
+                        n += 1
+                pd[0].expanded = True
+                self.msg(f"{n} layer(s) are now children of {pd[0].name}")
+                return
             if r and moved[0]:
                 src, ti, _ = r
                 group = [x for x in self.objs if x in self.sel] if src in self.sel else [src]      # all selected layers move together
@@ -498,7 +522,7 @@ class TimelineMixin:
                 self.hit(rc, lambda mx, my, item=item: self.kf_press(item, mx))
                 self.hit(rc, lambda mx, my, item=item: self.kf_menu(item, (mx, my)), (3,))
         self.pop_clip(prev_all)
-        if self.reorder:                                      # where the dragged layer will land
+        if self.parent_drop:                                  # drop target: the whole parent row is highlighted\n            pr = pygame.Rect(tl.x + 6, self.parent_drop[1], tl.w - 12, RH)\n            pygame.draw.rect(self.screen, COLOR_ACCENT_L, pr, 2, border_radius=6)\n        if self.reorder:                                      # where the dragged layer will land
             pygame.draw.line(self.screen, COLOR_PLAYHEAD, (tl.x + 8, self.reorder[2]), (cx0 + area_w, self.reorder[2]), 3)
         vt = pygame.Rect(tl.right - 16, y0, 8, reg.h)       # vertical scrollbar
         self.rrect(vt, (46, 46, 46), 4)

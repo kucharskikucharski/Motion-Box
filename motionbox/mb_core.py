@@ -345,6 +345,9 @@ def draw_icon(surf, kind, r, col):
         rdiamond(surf, (cx, cy), 7, col, False)
     elif kind == "key_f":
         rdiamond(surf, (cx, cy), 7, col, True)
+    elif kind == "key_auto":                    # auto keyframe: record dot
+        d.circle(surf, col, (cx, cy), 10, 2)
+        d.circle(surf, col, (cx, cy), 4)
     elif kind == "key_g":                      # global keyframe: every layer
         rdiamond(surf, (cx, cy), 6, col, False)
         d.circle(surf, col, (cx, cy), 11, 1)
@@ -496,7 +499,7 @@ def ease_t(t, e):
 # ---------------------------------------------------------------- model
 FIELDS = ("name", "kind", "w", "h", "pts", "fill", "fill_on", "fill_a", "stroke_on", "stroke", "stroke_a",
           "stroke_w", "base", "expr", "visible", "locked", "render", "expanded", "label", "node", "phases",
-          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers")
+          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin")
 
 
 class Obj:
@@ -534,6 +537,7 @@ class Obj:
         self.rot_limit = None     # bones: (min, max) bend angle in degrees relative to the parent
         self.sides = 6            # polygon: number of corners
         self.drivers = []         # controllers this object follows: [{src, k, lag}]
+        self.pin = False          # bones: the joint is locked (rotation cannot be changed)
         self.matte, self.matte_inv, self.caption = None, False, ""   # alpha matte layer (name), inverted?, text shown above sliders
 
     def value(self, prop, f):

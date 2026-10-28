@@ -73,7 +73,7 @@ class AppBase:
         self.animate_filter, self.split_frac, self.sel_wire, self.hit_clip, self.aux_scroll = "both", 0.5, None, None, 0
         self.focus_area, self.clip_cut, self.ar_start, self.ar_last, self.rename_dlg = "view", False, {}, 0, None
         self.prefs_tab, self.pref_q = "General", ""
-        self.global_key, self.rig_bones = False, {}
+        self.global_key, self.rig_bones, self.auto_key, self.rest_layer, self.parent_drop, self.autoscroll = False, {}, False, None, None, None
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -134,7 +134,7 @@ class AppBase:
             if not kids:
                 self.msg(f"{lyr.name} has no children")
                 return
-            lyr.collapsed = False
+            lyr.expanded = True
             self.sel = kids
         else:
             p = lyr.parent
@@ -148,8 +148,8 @@ class AppBase:
     def reveal_in_timeline(self, o):
         lyr = o.owner or o
         p = lyr.parent
-        while p is not None:                                   # open collapsed groups on the way
-            p.collapsed = False
+        while p is not None:                                   # open the parents on the way
+            p.expanded = True
             p = p.parent
         for i, (kind, ob, _) in enumerate(self.tl_rows()):
             if ob is lyr and kind == "o":
@@ -529,6 +529,8 @@ class AppBase:
 
     # ---------------------------------------------------- transforms / values
     def val(self, o, p, f):
+        if self.rest_layer is not None:                          # drawing view: everything at its rest values (no rig, no animation)
+            return o.base[p]
         v = o.value(p, f)
         if p == "rotation" and o.ik and self._ik_depth < 1:
             v = self.ik_rotation(o, f, v)
@@ -662,6 +664,8 @@ class AppBase:
     def locked_props(self, o):
         """Properties that cannot be changed for this object (controllers and joysticks are restricted on purpose)."""
         k = o.kind
+        if o.pin:
+            return {"rotation"}                          # a pinned joint
         if o.ik:
             return {"rotation"}                          # driven by the IK solver
         if k == "ctrl":
@@ -737,7 +741,10 @@ class AppBase:
         if p in self.locked_props(o):
             return
         if not o.locked:
-            o.set_value(p, self.frame, v)
+            if self.auto_key and p in PROPS:                      # Auto Key: every edit becomes a keyframe
+                o.keys[p][int(self.frame)] = float(v)
+            else:
+                o.set_value(p, self.frame, v)
 
     def link(self, child, parent, quiet=False):
         p = parent
@@ -793,6 +800,19 @@ class AppBase:
             del o.keys[p][self.frame]
         else:
             o.keys[p][self.frame] = o.value(p, self.frame)
+
+    def toggle_auto_key(self, mx=0, my=0):
+        self.auto_key = not self.auto_key
+        self.msg("Auto Key ON: every change of position, rotation, scale or opacity makes a keyframe" if self.auto_key else "Auto Key off")
+
+    def enter_rest_edit(self, o=None):
+        o = o or self.psel
+        lyr = (o.owner or o) if o else None
+        if not lyr or lyr.kind not in ("vlayer", "rlayer"):
+            self.msg("Select a drawing layer first")
+            return
+        self.rest_layer, self.active_layer, self.sel = lyr, lyr, [lyr]
+        self.msg(f"Drawing view: {lyr.name} without the rig and animation. Esc leaves it")
 
     def toggle_global_key(self, mx=0, my=0):
         self.global_key = not self.global_key
@@ -2065,7 +2085,7 @@ class AppBase:
         if self.drag_end:
             fn, self.drag_end = self.drag_end, None
             fn()
-        self.drag, self.press_slot = None, None
+        self.drag, self.press_slot, self.autoscroll = None, None, None
         self.schem_release(pos)
         self.flyout_release(pos)
 
@@ -2155,6 +2175,10 @@ class AppBase:
                     ed["text"] = ed["text"][:ed["cur"]] + e.unicode + ed["text"][ed["cur"]:]
                     ed["cur"] += 1
                     self.sugg_i = 0
+            return
+        if k == pygame.K_ESCAPE and self.rest_layer is not None:
+            self.rest_layer = None
+            self.msg("Back to the rig view")
             return
         if k == pygame.K_ESCAPE:
             self.dialog, self.link_mode, self.menu_open, self.ctx = None, False, None, None
@@ -2284,6 +2308,21 @@ class AppBase:
             return
         if self.mode != "main":
             return
+        if self.drag and self.autoscroll and self.btn == 1:        # dragging to the edge scrolls the view
+            mx_, my_ = pygame.mouse.get_pos()
+            if self.autoscroll == "tl":
+                top, bot = self.r_tl.y + 40, self.r_tl.bottom - 10
+                if my_ < top + 16 or my_ > bot - 16:
+                    self.tl_vy = clamp(self.tl_vy + (-12 if my_ < top + 16 else 12), 0, getattr(self, "tl_vmax", 0))
+                    self.drag(mx_, my_)
+            elif self.autoscroll == "nodes" and self.r_aux.w:
+                r_, st = self.r_aux, 14
+                dx = st if mx_ < r_.x + 30 else (-st if mx_ > r_.right - 30 else 0)
+                dy = st if my_ < r_.y + 30 else (-st if my_ > r_.bottom - 60 else 0)
+                if dx or dy:
+                    self.nd_ox += dx
+                    self.nd_oy += dy
+                    self.drag(mx_, my_)
         if self.playing:
             self.play_acc += dt * self.fps
             while self.play_acc >= 1:

@@ -340,6 +340,12 @@ class PanelsMixin:
         if not o:
             self.txt("Select an object to", x, y, self.f12, COLOR_MUTED)
             self.txt("edit its values.", x, y + 20, self.f12, COLOR_MUTED)
+            y += 60
+            self.heading(x, y, "Rig", "characters")
+            self.button((x, y + 28, w, 32), "Generate body drawing layers", lambda mx, my: self.generate_body_layers(), font=self.f11,
+                        hint="Empty, parented layers: Head, Neck, Arm_R ... Draw each part in its layer, put the anchors on the joints")
+            self.button((x, y + 66, w, 32), "Do the rig", lambda mx, my: self.do_rig(), font=self.f11,
+                        hint="Builds the bones from the layers' names, anchors and hierarchy, puts IK on arms and legs")
             return
         self.txt(o.name if len(self.sel) == 1 else f"{len(self.sel)} objects", x, y, self.fb)
         y += 32
@@ -815,6 +821,7 @@ class PanelsMixin:
                  ("chev_l", lambda mx, my: self.jump_key(-1), "Previous keyframe", False),
                  ("key", self.key_here, "Set keyframe on the selected layer(s) at the playhead (K)", False),
                  ("chev_r", lambda mx, my: self.jump_key(1), "Next keyframe", False),
+                 ("key_auto", self.toggle_auto_key, "Auto Key: every change of position, rotation, scale or opacity makes a keyframe", self.auto_key),
                  ("key_g", self.toggle_global_key, "Global keyframe: when on, K sets a keyframe on every layer", self.global_key),
                  ("key_x", self.delete_keys_here, "Delete keyframes at the playhead on the selected layers", False),
                  ("key_all", self.select_keys_frame, "Select all keyframes at the playhead", False)]
@@ -873,6 +880,7 @@ class PanelsMixin:
                        ("Reset Anchor Point", self.reset_anchor, "", None),
                        ("Generate Body Drawing Layers", self.generate_body_layers, "", None),
                        ("Do the Rig", self.do_rig, "", None),
+                       ("Edit Drawing without the Rig", self.enter_rest_edit, "", None),
                        ("Create Skeleton from Selection", self.skeleton_from_selection, "", None), None,
                        ("Group", self.group_selected, "Ctrl+G", None), ("Ungroup", self.ungroup_selected, "", None),
                        ("Fold Layers", self.fold_selected, "", None),
