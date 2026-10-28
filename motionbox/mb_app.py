@@ -73,6 +73,7 @@ class AppBase:
         self.animate_filter, self.split_frac, self.sel_wire, self.hit_clip, self.aux_scroll = "both", 0.5, None, None, 0
         self.focus_area, self.clip_cut, self.ar_start, self.ar_last, self.rename_dlg = "view", False, {}, 0, None
         self.prefs_tab, self.pref_q = "General", ""
+        self.global_key, self.rig_bones = False, {}
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -122,6 +123,40 @@ class AppBase:
     @property
     def psel(self):
         return self.sel[-1] if self.sel else None
+
+    def select_relative(self, children=False):
+        o = self.psel
+        if o is None:
+            return
+        lyr = o.owner or o
+        if children:
+            kids = [c for c in self.objs if c.parent is lyr]
+            if not kids:
+                self.msg(f"{lyr.name} has no children")
+                return
+            lyr.collapsed = False
+            self.sel = kids
+        else:
+            p = lyr.parent
+            if p is None or p not in self.objs:
+                self.msg(f"{lyr.name} has no parent")
+                return
+            self.sel = [p]
+        self.reveal_in_timeline(self.sel[0])
+        self.msg("Selected " + ("children of " + lyr.name if children else "parent " + self.sel[0].name))
+
+    def reveal_in_timeline(self, o):
+        lyr = o.owner or o
+        p = lyr.parent
+        while p is not None:                                   # open collapsed groups on the way
+            p.collapsed = False
+            p = p.parent
+        for i, (kind, ob, _) in enumerate(self.tl_rows()):
+            if ob is lyr and kind == "o":
+                reg_h = max(24, self.r_tl.h - 48)
+                if i * 24 < self.tl_vy or i * 24 + 24 > self.tl_vy + reg_h:
+                    self.tl_vy = max(0, i * 24 - reg_h // 2)
+                return
 
     def select(self, o, add=False):
         if o is None:
@@ -759,8 +794,17 @@ class AppBase:
         else:
             o.keys[p][self.frame] = o.value(p, self.frame)
 
+    def toggle_global_key(self, mx=0, my=0):
+        self.global_key = not self.global_key
+        self.msg("Global keyframe ON: K sets a key on every layer" if self.global_key else "Global keyframe off")
+
     def key_here(self, mx=0, my=0):
-        """One layer: toggle a keyframe. Several layers: set a keyframe on all of them at once."""
+        """One layer: toggle a keyframe. Several layers: set a keyframe on all of them at once. Global key: every layer."""
+        if self.global_key:
+            for o in self.objs:
+                self.add_key_at(o, None, self.frame)
+            self.msg(f"Global keyframe {self.frame} set on {len(self.objs)} layers")
+            return
         if any(o.owner for o in self.sel):
             self.msg("Keyframes live on layers - select the layer in the timeline")
             return
@@ -1153,8 +1197,58 @@ class AppBase:
                 made.append(b)
         for l in layers:
             self.link(l, own[id(l)], quiet=True)                 # every layer follows the bone that starts at its anchor
+        self.rig_bones = {}
+        for l in layers:                                     # the bone that starts at a layer's anchor carries the layer's name
+            b = own[id(l)]
+            b.name = self.unique_name(f"{l.name}_bone")
+            self.rig_bones[l.name] = b
         self.sel = made
         self.msg(f"Skeleton created: {len(made)} bones. Rotate a bone to pose the character")
+
+    BODY_RIG = [  # name, parent, pivot (joint) relative to the middle of the artboard
+        ("Hips", None, (0, -10)), ("Body_1", "Hips", (0, -45)), ("Body_2", "Body_1", (0, -120)), ("Neck", "Body_2", (0, -200)),
+        ("Head", "Neck", (0, -240)),
+        ("Arm_R", "Body_2", (-40, -185)), ("Forearm_R", "Arm_R", (-120, -85)), ("Hand_R", "Forearm_R", (-170, 10)),
+        ("Arm_L", "Body_2", (40, -185)), ("Forearm_L", "Arm_L", (120, -85)), ("Hand_L", "Forearm_L", (170, 10)),
+        ("Thigh_R", "Hips", (-30, -5)), ("Tibia_R", "Thigh_R", (-40, 155)), ("Foot_R1", "Tibia_R", (-40, 315)), ("Foot_R2", "Foot_R1", (0, 345)),
+        ("Thigh_L", "Hips", (30, -5)), ("Tibia_L", "Thigh_L", (40, 155)), ("Foot_L1", "Tibia_L", (40, 315)), ("Foot_L2", "Foot_L1", (0, 345))]
+
+    def generate_body_layers(self):
+        """Duik style: empty drawing layers with the usual body-part names, parented and with the anchor on the joint."""
+        made = {}
+        cx, cy = self.aw / 2, self.ah / 2
+        for name, par, (jx, jy) in self.BODY_RIG:
+            px, py = cx + jx, cy + jy
+            o = Obj(self.unique_name(name), "vlayer", px, py, self.aw, self.ah)
+            o.anchor = (px - cx, py - cy)                    # the pivot sits on the joint, the drawing area stays on the artboard
+            self.objs.insert(0, o)
+            made[name] = o
+        for name, par, _ in self.BODY_RIG:
+            if par:
+                self.link(made[name], made[par], quiet=True)
+        self.sel = list(made.values())
+        self.active_layer = made["Head"]
+        self.msg("Body layers created and parented. Draw each part in its layer, move the anchors onto the joints, then use Do the Rig")
+
+    def do_rig(self):
+        """Build the bones from the body layers (names, anchors, hierarchy) and put two-bone IK on arms and legs."""
+        names = {n for n, _, _ in self.BODY_RIG}
+        layers = [o for o in self.objs if not o.owner and o.kind == "vlayer" and (o.name in names or o in self.sel)]
+        if len(layers) < 2:
+            self.msg("Create the body layers first (Object > Generate Body Layers) or select your own parented layers")
+            return
+        self.sel = layers
+        self.skeleton_from_selection()
+        n = 0
+        for lower in ("Forearm_R", "Forearm_L", "Tibia_R", "Tibia_L"):
+            b = self.rig_bones.get(lower)
+            if b and b.parent is not None and b.parent.kind == "bone":
+                try:
+                    self.create_ik(b)
+                    n += 1
+                except Exception:  # noqa
+                    pass
+        self.msg(f"Rig done: {len(self.rig_bones)} bones, IK on {n} limbs. Use the Animate Bones tool to pose it")
 
     def toggle_props(self, props, add=False):
         """P / R / T / S on the timeline show only those properties of the selected layers (like After Effects)."""
@@ -1724,11 +1818,11 @@ class AppBase:
         self.hit(rect, fn)
         return rect
 
-    def flat_button(self, rect, fn, hint=None, active=False):
+    def flat_button(self, rect, fn, hint=None, active=False, hover=True):
         """No background when idle (same colour as the panel); lighter on hover."""
         rect = pygame.Rect(rect)
         hov = self.hovering(rect)
-        if active or hov:
+        if active or (hov and hover):
             self.rrect(rect, COLOR_ACCENT if active else COLOR_HOVER, 8)
         if hov and hint:
             self.hover_hint = hint
@@ -2097,6 +2191,8 @@ class AppBase:
             self.default_colors()
         elif k == pygame.K_x and not ctrl:
             self.swap_colors()
+        elif k == pygame.K_b and not ctrl and (self.r_tl.collidepoint(pos) or (self.workspace == "Schematic" and self.r_aux.collidepoint(pos))):
+            self.select_relative(children=bool(mods & pygame.KMOD_SHIFT))     # B = parent, Shift+B = children (over timeline / schematic)
         elif k == pygame.K_u:
             self.toggle_u()
         elif k == pygame.K_m and not ctrl:

@@ -1,0 +1,67 @@
+name: Build Motion Box
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "motionbox/**"
+      - ".github/workflows/main.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: motionbox
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # imageio-ffmpeg brings its own ffmpeg, so MP4 export works without installing anything
+      - name: Install
+        run: pip install pygame pyinstaller imageio-ffmpeg
+
+      - name: Build the app
+        shell: bash
+        run: |
+          SEP=":"
+          if [ "$RUNNER_OS" = "Windows" ]; then SEP=";"; fi
+          ARGS=""
+          for d in assets icons fonts; do
+            if [ -d "$d" ]; then ARGS="$ARGS --add-data $d${SEP}$d"; fi
+          done
+          pyinstaller --noconfirm --windowed --name MotionBox $ARGS --collect-all imageio_ffmpeg motion_box.py
+
+      # macOS: zip the .app first, otherwise the artifact download loses its permissions
+      - name: Pack macOS app
+        if: runner.os == 'macOS'
+        run: cd dist && zip -qry MotionBox-macOS.zip MotionBox.app
+
+      - name: Upload (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MotionBox-Windows
+          path: motionbox/dist/MotionBox
+
+      - name: Upload (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MotionBox-macOS
+          path: motionbox/dist/MotionBox-macOS.zip
+
+      - name: Upload (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MotionBox-Linux
+          path: motionbox/dist/MotionBox

@@ -9,19 +9,37 @@ EXTRA = 24         # empty frames shown after the last frame
 
 
 class TimelineMixin:
+    def obj_depth(self, o):
+        d, p = 0, o.parent
+        while p in self.objs and d < 20:
+            d, p = d + 1, p.parent
+        return d
+
     def tl_rows(self):
-        rows, seen = [], set()
-        for o in self.objs:
+        """A tree: every layer is followed by the layers parented to it (a drawing under its peg, a peg under its bone ...)."""
+        rows, seen, done = [], set(), set()
+
+        def walk(o):
+            if id(o) in done:
+                return
+            done.add(id(o))
             if o.fold_id is not None:                       # folded layers collapse into one bar
                 if o.fold_id not in seen:
                     seen.add(o.fold_id)
                     rows.append(("f", o, o.fold_id))
-                continue
-            if o.parent in self.objs and o.parent.collapsed:       # children of a folded group
-                continue
-            rows.append(("o", o, None))
-            if o.expanded:
-                rows.extend(("p", o, p) for p in PROPS if (o.u_props is None or p in o.u_props) and (not o.u_mode or o.keys[p] or p in o.expr))
+            else:
+                rows.append(("o", o, None))
+                if o.expanded:
+                    rows.extend(("p", o, p) for p in PROPS if (o.u_props is None or p in o.u_props) and (not o.u_mode or o.keys[p] or p in o.expr))
+            if not o.collapsed:                             # a folded parent hides its children
+                for c in self.objs:
+                    if c.parent is o:
+                        walk(c)
+        for o in self.objs:
+            if o.parent is None or o.parent not in self.objs:
+                walk(o)
+        for o in self.objs:                                  # safety net
+            walk(o)
         return rows
 
     def toggle_prop_key_at(self, o, p, f):
@@ -369,7 +387,7 @@ class TimelineMixin:
                 if self.edit and self.edit.get("id") == rid:
                     self.field((tl.x + 128, y + 1, LCW - 124, RH - 4), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
                 else:
-                    self.txt(o.name, tl.x + 132 + (12 if o.parent in self.objs else 0), y + 5)
+                    self.txt(o.name, tl.x + 132 + 12 * min(self.obj_depth(o), 5), y + 5)
                 if o.name in used_mattes:                          # this layer is the alpha of another layer
                     self.txt("a", tl.x + LCW - 16, y + 4, self.fb, COLOR_TEAL)
                     if self.hovering(pygame.Rect(tl.x + LCW - 22, y, 20, RH)):

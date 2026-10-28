@@ -155,7 +155,7 @@ class CanvasMixin:
                                                            else "resize_v" if i in (4, 6) else "resize_h")
         elif inv and self.tool == "brush":                  # a circle that shows the brush size ([ and ] change it)
             kind = f"brush_{int(clamp(self.brush_px * self.zoom, 8, 120)) // 2 * 2}"
-        elif inv and self.tool in self.GLYPH_TOOLS and load_icon_state(self.tool, 30, "default")[0] is not None:   # no icon = normal arrow
+        elif inv and self.tool not in ("select", "hand") and load_icon_state(self.tool, 30, "default")[0] is not None:   # no icon = normal arrow
             kind = "tool_" + self.tool
         if kind != self.cursor_kind:
             self.cursor_kind = kind
@@ -303,7 +303,14 @@ class CanvasMixin:
             else:
                 self.msg("Click the lower bone of a two-bone chain")
             return
-        if tool in ("pen", "multiline", "text", "taper", "lipsync", "artboard", "bone_anim", "view_rotate"):
+        if tool == "bone_anim":                                  # click the bone or any drawing that follows it: the bone rotates
+            b = self.pick_bone(mx, my)
+            if b:
+                self.sel = [b]
+                return self.start_rotate(b)
+            self.msg("Animate Bones: click a bone, or a drawing that is parented to a bone")
+            return
+        if tool in ("pen", "multiline", "text", "taper", "lipsync", "view_rotate"):
             self.msg(f"{TOOL_INFO[tool][0]}: coming soon")
             return
         if tool == "anchor":
@@ -579,7 +586,18 @@ class CanvasMixin:
         self.field((cx + 36, v.y + 12, 48, 24), self.brush_px, lambda val: setattr(self, "brush_px", int(clamp(val, 1, 200))),
                    "brush_px", numeric=True, center=True, hint="Brush size for raster layers")
 
+    def pick_bone(self, mx, my):
+        o = self.pick(mx, my)
+        o = (o.owner or o) if o else None
+        while o is not None and o.kind != "bone":
+            o = o.parent
+        return o
+
     def tool_filter(self, o):
+        if self.tool in ("bone_ik", "bone_edit"):                # the bone tools only ever touch bones
+            return o.kind == "bone"
+        if self.tool in ("select", "transform") and o.kind == "bone":
+            return False                                          # Select moves drawings, pegs and nulls, never bones
         if self.tool != "animate":
             return True
         isp = o.kind == "peg"
@@ -977,8 +995,7 @@ class CanvasMixin:
                     cx, cy = self.a2s(wx, wy)
                     pygame.draw.line(self.screen, bb, (cx - 6, cy), (cx + 6, cy))
                     pygame.draw.line(self.screen, bb, (cx, cy - 6), (cx, cy + 6))
-                    if o.kind in ("null", "peg"):
-                        self.rrect((cx - 6, cy - 6, 12, 12), bb, 2, 1)
+                    self.rrect((cx - 7, cy - 7, 14, 14), bb, 2, 1)           # square around the cross: the anchor is easy to spot
         # hover: navy outline + name tag
         h = self.hover
         if h and h.visible and (h.kind != "vlayer" or h.items) and h.kind != "rlayer":
@@ -1017,9 +1034,9 @@ class CanvasMixin:
         for key, hint in items:
             rc = pygame.Rect(x, v.y + 8, 32, 32)
             if key == "threed":
-                self.flat_button(rc, lambda mx, my: self.msg("3D view: coming soon"), hint)
+                self.flat_button(rc, lambda mx, my: self.msg("3D view: coming soon"), hint, hover=False)
             else:
-                self.flat_button(rc, lambda mx, my, k=key: self.view.__setitem__(k, not self.view[k]), hint + (" (right-click: frames shown)" if key == "onion" else ""), self.view[key])
+                self.flat_button(rc, lambda mx, my, k=key: self.view.__setitem__(k, not self.view[k]), hint + (" (right-click: frames shown)" if key == "onion" else ""), self.view[key], hover=False)
                 if key == "onion":
                     self.hit(rc, lambda mx, my: setattr(self, "ctx", {"pos": (mx, my), "items": [(f"Previous frames: {n}", lambda n=n: self.onion.__setitem__("before", n)) for n in (0, 1, 2, 3, 5)] + [(f"Next frames: {n}", lambda n=n: self.onion.__setitem__("after", n)) for n in (0, 1, 2, 3, 5)]}), (3,))
             cx, cy = rc.center
@@ -1065,9 +1082,14 @@ class CanvasMixin:
                     o.node = [x, y]
                     break
         return pygame.Rect(int(r.x + self.nd_ox + o.node[0] * z), int(r.y + self.nd_oy + o.node[1] * z),
-                           int(168 * z), int((112 if o.node_open else 56) * z))
+                           int((150 if self.is_pill(o) else 168) * z), int((30 if self.is_pill(o) else (112 if o.node_open else 56)) * z))
+
+    def is_pill(self, o):
+        return o.kind in ("peg", "null", "bone") or o.kind.startswith("ctrl")
 
     def port_y(self, nr):
+        if nr.h <= int(34 * self.nd_zoom):                    # a pill: ports in the middle
+            return nr.centery
         return nr.y + int(36 * self.nd_zoom)
 
     def nd_wheel(self, dy, pos):
@@ -1077,18 +1099,33 @@ class CanvasMixin:
         self.nd_ox, self.nd_oy, self.nd_zoom = pos[0] - r.x - wx * nz, pos[1] - r.y - wy * nz, nz
 
     def arrange_nodes(self):
-        depth = {}
+        """A tree from left to right: parents on the left, their children in a column to the right, centred on the parent."""
+        kids = {id(o): [c for c in self.objs if c.parent is o] for o in self.objs}
+        roots = [o for o in self.objs if o.parent is None or o.parent not in self.objs]
+        row, ypos, done = [0], {}, set()
+
+        def place(o, depth):
+            if id(o) in done:
+                return ypos[id(o)]
+            done.add(id(o))
+            ks = kids[id(o)]
+            if not ks:
+                y = row[0]
+                row[0] += 56 if self.is_pill(o) else 112
+            else:
+                ys = [place(c, depth + 1) for c in ks]
+                y = (min(ys) + max(ys)) / 2
+            ypos[id(o)] = y
+            o.node = [48 + depth * 280, 90 + y]
+            return y
+        for r in roots:
+            place(r, 0)
+            row[0] += 40                                       # air between separate trees
         for o in self.objs:
-            d, p = 0, o.parent
-            while p and d < 20:
-                d, p = d + 1, p.parent
-            depth[id(o)] = d
-        cols = {}
-        for o in self.objs:
-            n = cols.setdefault(depth[id(o)], [])
-            o.node = [32 + depth[id(o)] * 216, 64 + len(n) * 88]
-            n.append(o)
-        self.msg("Nodes arranged by hierarchy")
+            if id(o) not in done:
+                place(o, 0)
+        self.nd_reset()
+        self.msg("Nodes arranged as a tree")
 
     def nd_reset(self):
         self.nd_zoom, self.nd_ox, self.nd_oy = 1.0, 0.0, 0.0
@@ -1357,6 +1394,18 @@ class CanvasMixin:
             nr = self.node_rect(o)
             sel = o in self.sel
             lc = self.label_color(o)
+            if self.is_pill(o):                                    # peg / null / bone / controller: just a coloured pill with its name
+                self.rrect(nr, shade(lc, 0.62), nr.h // 2)
+                self.rrect(nr, (255, 255, 255) if sel else lc, nr.h // 2, 2)
+                pc = self.push_clip(nr)
+                tid = "ctrl" if o.kind.startswith("ctrl") else o.kind
+                draw_tool_icon(self.screen, tid, pygame.Rect(nr.x + 4, nr.y, nr.h, nr.h), (255, 255, 255))
+                self.txt(self.fit_text(o.name, self.fb, nr.w - nr.h - 14), nr.x + nr.h + 4, nr.centery - 8, self.fb, (255, 255, 255))
+                self.pop_clip(pc)
+                prd = max(4, int(6 * z))
+                pygame.draw.circle(self.screen, (230, 230, 230), (nr.right, self.port_y(nr)), prd)
+                pygame.draw.circle(self.screen, (230, 230, 230) if o.parent else (150, 150, 150), (nr.x, self.port_y(nr)), prd)
+                continue
             rad = max(4, int(8 * z))
             self.rrect(nr, (46, 48, 54), rad)
             self.rrect(nr, lc if sel else (80, 80, 90), rad, 2)

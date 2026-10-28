@@ -815,6 +815,7 @@ class PanelsMixin:
                  ("chev_l", lambda mx, my: self.jump_key(-1), "Previous keyframe", False),
                  ("key", self.key_here, "Set keyframe on the selected layer(s) at the playhead (K)", False),
                  ("chev_r", lambda mx, my: self.jump_key(1), "Next keyframe", False),
+                 ("key_g", self.toggle_global_key, "Global keyframe: when on, K sets a keyframe on every layer", self.global_key),
                  ("key_x", self.delete_keys_here, "Delete keyframes at the playhead on the selected layers", False),
                  ("key_all", self.select_keys_frame, "Select all keyframes at the playhead", False)]
         total = sum(16 if it is None else 36 for it in items)
@@ -870,6 +871,8 @@ class PanelsMixin:
             "Object": [("New Layer...", lambda: setattr(self, "layer_dlg", True), "", None),
                        ("New Peg", lambda: self.new_obj("peg", self.aw // 2, self.ah // 2), "", None),
                        ("Reset Anchor Point", self.reset_anchor, "", None),
+                       ("Generate Body Drawing Layers", self.generate_body_layers, "", None),
+                       ("Do the Rig", self.do_rig, "", None),
                        ("Create Skeleton from Selection", self.skeleton_from_selection, "", None), None,
                        ("Group", self.group_selected, "Ctrl+G", None), ("Ungroup", self.ungroup_selected, "", None),
                        ("Fold Layers", self.fold_selected, "", None),
