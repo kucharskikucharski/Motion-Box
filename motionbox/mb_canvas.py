@@ -1232,6 +1232,7 @@ class CanvasMixin:
                     return
                 if o not in self.sel:
                     self.sel = [o]
+                self.layer_double_click(o)                                # double-click the name = rename (the layer too)
                 items = []
                 for oo in self.sel:
                     self.node_rect(oo)
@@ -1242,6 +1243,22 @@ class CanvasMixin:
                 def mv(mx, my):
                     for oo, x0, y0 in items:
                         oo.node = [x0 + ((mx - mx0) - (self.nd_ox - ox0)) / self.nd_zoom, y0 + ((my - my0) - (self.nd_oy - oy0)) / self.nd_zoom]
+                    self.drop_wire = None
+                    if len(items) == 1:                                   # over a wire between two nodes: it lights up yellow
+                        nd = items[0][0]
+                        nrd = self.node_rect(nd)
+                        wo = self.wire_at(nrd.centerx, self.port_y(nrd), 18)       # the node's middle against the wire
+                        if wo is not None and wo is not nd and wo.parent is not nd:
+                            self.drop_wire = wo
+
+                def mv_end():
+                    dw, self.drop_wire = self.drop_wire, None
+                    if dw is not None and len(items) == 1:               # dropped on the wire: parent -> node -> child
+                        nd, par = items[0][0], dw.parent
+                        if self.link(nd, par, quiet=True) is not False and self.link(dw, nd, quiet=True) is not False:
+                            nd.node = [(par.node[0] + dw.node[0]) / 2, (par.node[1] + dw.node[1]) / 2]
+                            self.msg(f"{nd.name} inserted between {par.name} and {dw.name}")
+                self.drag_end = mv_end
                 return mv
         wo = self.wire_at(mx, my)
         self.sel_wire = wo                                        # click a wire to select it (Delete disconnects)
@@ -1387,7 +1404,7 @@ class CanvasMixin:
                         u ** 3 * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t ** 3 * p1[1]))
         return pts
 
-    def wire_at(self, mx, my):
+    def wire_at(self, mx, my, tol=6):
         """The child whose wire to its parent passes under the mouse."""
         for o in self.objs:
             if o.parent:
@@ -1397,7 +1414,7 @@ class CanvasMixin:
                     vx, vy = b[0] - a[0], b[1] - a[1]
                     L2 = vx * vx + vy * vy or 1
                     t = clamp(((mx - a[0]) * vx + (my - a[1]) * vy) / L2, 0, 1)
-                    if math.hypot(mx - (a[0] + t * vx), my - (a[1] + t * vy)) <= 6:
+                    if math.hypot(mx - (a[0] + t * vx), my - (a[1] + t * vy)) <= tol:
                         return o
         return None
 
@@ -1423,7 +1440,7 @@ class CanvasMixin:
             if o.parent:                                      # parent -> child, the arrow points at the child
                 p = self.node_rect(o.parent)
                 p0, p1 = (p.right, self.port_y(p)), (c.x, self.port_y(c))
-                col, w = ((255, 215, 70), 3) if o is self.sel_wire else ((150, 160, 220), 2)
+                col, w = ((255, 215, 70), 3) if (o is self.sel_wire or o is self.drop_wire) else ((150, 160, 220), 2)
             else:                                             # nodes without a parent hang on the Table
                 p0, p1, col, w = (tb.right, self.port_y(tb)), (c.x, self.port_y(c)), (70, 76, 100), 1
             pygame.draw.lines(self.screen, col, False, self.curve_pts(p0, p1), w)
@@ -1448,7 +1465,11 @@ class CanvasMixin:
                 pc = self.push_clip(nr)
                 tid = "ctrl" if o.kind.startswith("ctrl") else o.kind
                 draw_tool_icon(self.screen, tid, pygame.Rect(nr.x + 4, nr.y, nr.h, nr.h), (255, 255, 255))
-                self.txt(self.fit_text(o.name, self.fb, nr.w - nr.h - 14), nr.x + nr.h + 4, nr.centery - 8, self.fb, (255, 255, 255))
+                rid = f"rename_{id(o)}"
+                if self.edit and self.edit.get("id") == rid:
+                    self.field((nr.x + nr.h, nr.y + 3, nr.w - nr.h - 10, nr.h - 6), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
+                else:
+                    self.txt(self.fit_text(o.name, self.fb, nr.w - nr.h - 14), nr.x + nr.h + 4, nr.centery - 8, self.fb, (255, 255, 255))
                 self.pop_clip(pc)
                 prd = max(4, int(6 * z))
                 pygame.draw.circle(self.screen, (230, 230, 230), (nr.right, self.port_y(nr)), prd)
@@ -1464,8 +1485,12 @@ class CanvasMixin:
             tc = (255, 255, 255)                           # names are always white, with a soft shadow
             nm = self.fit_text(o.name, self.fb, nr.w - 56)
             ty = nr.y + 3 + max(0, (hh - 14) // 2)
-            self.txt(nm, nr.x + 13, ty + 1, self.fb, (0, 0, 0))
-            self.txt(nm, nr.x + 12, ty, self.fb, tc)
+            rid = f"rename_{id(o)}"
+            if self.edit and self.edit.get("id") == rid:
+                self.field((nr.x + 6, nr.y + 3, nr.w - 40, hh - 2), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
+            else:
+                self.txt(nm, nr.x + 13, ty + 1, self.fb, (0, 0, 0))
+                self.txt(nm, nr.x + 12, ty, self.fb, tc)
             draw_icon(self.screen, "tri_d" if o.node_open else "tri_r", pygame.Rect(nr.right - int(26 * z), nr.y + 2, int(22 * z), hh), tc)
             self.txt(o.kind.capitalize(), nr.x + 12, nr.y + hh + 10, self.f11, COLOR_MUTED)
             if o.node_open:
@@ -1499,7 +1524,8 @@ class CanvasMixin:
         icons = (("arrange", "Arrange nodes by hierarchy", lambda mx, my: self.arrange_nodes()),
                  ("fit", "Fit all nodes in the view", lambda mx, my: self.nd_fit()),
                  ("one", "Zoom 1:1", lambda mx, my: setattr(self, "nd_zoom", 1.0)),
-                 ("thumbs", "Show / hide the thumbnails on all nodes", lambda mx, my: self.toggle_all_thumbs()))
+                 ("thumbs", "Show / hide the thumbnails on all nodes", lambda mx, my: self.toggle_all_thumbs()),
+                 ("locate", "Centre the view on the selected node", lambda mx, my: self.nd_center_on(self.psel)))
         for key, hint, fn in icons:
             rc = self.flat_button((x, bar.y + 4, 32, 32), fn, hint)
             col = (225, 225, 225)

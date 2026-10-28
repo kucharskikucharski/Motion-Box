@@ -146,3 +146,8 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - Paleta: foldery i nazwy kolorów
 - Menu skrótów z wizualizacją klawiatury
 - Ikony: brakuje Transform, Peg, Edit Skeleton, Animate; Gradient czeka na narzędzie
+
+## Dodane 28.10.2026 (wieczór), jeszcze otwarte
+- Library: miniatury z prawdziwą zawartością, foldery, przeciąganie w obie strony (do biblioteki i ze sceny)
+- Nodey: grupa jako ramka z zachowaną hierarchią, rozwijana z menu podręcznego, kolor ramki i miniatura; czcionki i plugi skalowane razem z zoomem widoku
+- Zegarek przy wartościach jest też w panelu Properties (na razie tylko na timeline)

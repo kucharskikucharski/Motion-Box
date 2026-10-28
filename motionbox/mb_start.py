@@ -117,8 +117,7 @@ class StartMixin:
             else:
                 tx = sx - sf.get_width()
                 dot = (tx - int(15 * sc) + dx, cy)
-            self.screen.blit(sf, (tx, cy - sf.get_height() // 2))
-            pygame.draw.circle(self.screen, (0, 235, 205), dot, max(3, int(5 * sc)))
+            # (the animated status dot + text were removed on purpose: the splash shows only its picture)
         else:
             self.screen.fill((12, 12, 16))
             self.rrect((0, 0, self.W, self.H), COLOR_ACCENT, 32)

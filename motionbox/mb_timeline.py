@@ -31,16 +31,17 @@ class TimelineMixin:
                 rows.append(("o", o, None))
                 if o.expanded:                               # the arrow shows its properties and, below them, the layers parented to it
                     rows.extend(("p", o, p) for p in PROPS if (o.u_props is None or p in o.u_props) and (not o.u_mode or o.keys[p] or p in o.expr))
-            if o.expanded:
+            if not o.collapsed:                             # the fold icon next to the name hides the children
                 for c in self.objs:
-                    if c.parent is o:
+                    if c.parent is o and not free(c):
                         walk(c)
+        free = lambda o: o.kind.startswith("ctrl") or o.kind in ("pill", "rsquare") or bool(o.limit)       # noqa  controllers stand alone
         for o in self.objs:
-            if o.parent is None or o.parent not in self.objs:
+            if o.parent is None or o.parent not in self.objs or free(o):
                 walk(o)
         for o in self.objs:                                  # safety net
-            if id(o) not in done and o.parent in self.objs and not o.parent.expanded:
-                continue                                      # hidden inside a collapsed parent
+            if id(o) not in done and o.parent in self.objs and o.parent.collapsed:
+                continue                                      # hidden inside a folded parent
             walk(o)
         return rows
 
@@ -169,7 +170,7 @@ class TimelineMixin:
                 for x in group:
                     if x is not pd[0] and self.link(x, pd[0], quiet=True) is not False:
                         n += 1
-                pd[0].expanded = True
+                pd[0].collapsed = False
                 self.msg(f"{n} layer(s) are now children of {pd[0].name}")
                 return
             if r and moved[0]:
@@ -228,6 +229,7 @@ class TimelineMixin:
                 objs.append(o)
         orig = {id(o): ({pp: dict(o.keys[pp]) for pp in PROPS}, dict(o.ease)) for o in objs}
         last = [0]
+        dup = bool(pygame.key.get_mods() & pygame.KMOD_ALT)          # Alt + drag = duplicate the keyframes
 
         def apply(delta):
             for o in objs:
@@ -240,9 +242,9 @@ class TimelineMixin:
                         continue
                     for pp in (PROPS if p is None else (p,)):
                         if f in keys[pp]:
-                            moved.append((pp, f, keys[pp].pop(f)))
+                            moved.append((pp, f, keys[pp].get(f) if dup else keys[pp].pop(f)))
                     if p is None and f in ease:
-                        moved_e.append((f, ease.pop(f)))
+                        moved_e.append((f, ease.get(f) if dup else ease.pop(f)))
                 for pp, f, v in moved:
                     keys[pp][int(clamp(f + delta, 1, self.total))] = v
                 for f, e in moved_e:
@@ -426,15 +428,29 @@ class TimelineMixin:
             else:
                 self.rrect(lab, (32, 33, 38), 6)
                 self.txt(PROP_LABEL[p], tl.x + 60, y + 6, self.f11, COLOR_MUTED)
+                swr = pygame.Rect(tl.x + 36, y + 2, 20, RH - 4)                 # stopwatch: keyframes for this value on / off
+                on = p not in o.nowatch
+                scol = COLOR_ACCENT_L if on else (95, 95, 102)
+                pygame.draw.circle(self.screen, scol, swr.center, 6, 2)
+                pygame.draw.line(self.screen, scol, swr.center, (swr.centerx, swr.centery - 4), 1)
+                pygame.draw.line(self.screen, scol, swr.center, (swr.centerx + 3, swr.centery), 1)
+                if self.hovering(swr):
+                    self.hover_hint = "Stopwatch: when lit, this value gets keyframes. Click to switch it off / on"
+                self.hit(swr, lambda mx, my, o=o, p=p: (o.nowatch.remove(p) if p in o.nowatch else o.nowatch.append(p)))
                 fxr = pygame.Rect(tl.x + 8 + LCW - 32, y + 1, 28, RH - 4)
                 self.txt("fx", fxr.centerx, fxr.centery, self.fb, COLOR_YELLOW if p in o.expr else (90, 90, 96), center=True)
                 if self.hovering(fxr):
                     self.hover_hint = "Expression: click to add / remove (e.g. layer('Null Control 1').x + 100)"
                 self.hit(fxr, lambda mx, my, o=o, p=p: self.toggle_expr(o, p))
             pc = self.push_clip(cells)
-            for f in range(f0, f1 + 1):                    # frame grid is only visible outside the layer bar
-                col = (40, 40, 44) if f > self.total else ((52, 52, 58) if f % 5 == 0 else (46, 46, 50))
-                pygame.draw.rect(self.screen, col, (fx(f), y, max(1, cw - 1), RH - 2))
+            if cw >= 9:                                      # zoomed in far enough: the frame grid appears
+                for f in range(f0, f1 + 1):
+                    col = (40, 40, 44) if f > self.total else ((52, 52, 58) if f % 5 == 0 else (46, 46, 50))
+                    pygame.draw.rect(self.screen, col, (fx(f), y, max(1, cw - 1), RH - 2))
+            else:                                            # zoomed out: flat grey, the scene end is marked by a darker area
+                pygame.draw.rect(self.screen, (46, 46, 50), (cx0, y, max(0, fx(self.total + 1) - cx0), RH - 2))
+                pygame.draw.rect(self.screen, (40, 40, 44), (max(cx0, fx(self.total + 1)), y, area_w, RH - 2))
+            pygame.draw.line(self.screen, (28, 28, 32), (cx0, y + RH - 1), (cx0 + area_w, y + RH - 1))      # line between layers
             kf = o.key_frames(p)
             if kind == "o":
                 lo, hi = o.t_in, o.t_out or self.total      # the bar is the layer's in / out - not its keyframes

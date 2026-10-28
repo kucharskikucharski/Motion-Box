@@ -74,6 +74,7 @@ class AppBase:
         self.focus_area, self.clip_cut, self.ar_start, self.ar_last, self.rename_dlg = "view", False, {}, 0, None
         self.prefs_tab, self.pref_q = "General", ""
         self.global_key, self.rig_bones, self.auto_key, self.rest_layer, self.parent_drop, self.autoscroll = False, {}, False, None, None, None
+        self.drop_wire, self.kf_clip, self._last_sel = None, [], ()
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -87,7 +88,7 @@ class AppBase:
         self.labels = {}
         self.labels_sync()
         self.nd_zoom, self.nd_ox, self.nd_oy = 1.0, 0.0, 0.0           # node panel view
-        self.art_color, self.hidden, self.sel_anchor = COLOR_ARTBOARD, set(), None
+        self.art_color, self.hidden, self.sel_anchor = COLOR_ARTBOARD, {"right"}, None       # the right dock starts closed (Panels menu opens it)
         self.brush_opts = {"auto_close": False, "auto_group": False, "auto_fill": False, "draw_under": False}
         self.palette = [tuple(c) for _, c in LABEL_DEFAULT_LIST[:8]]
         self.hint_since, self._last_hint, self.nd_marquee, self.bone_last = 0, None, None, None
@@ -134,7 +135,7 @@ class AppBase:
             if not kids:
                 self.msg(f"{lyr.name} has no children")
                 return
-            lyr.expanded = True
+            lyr.collapsed = False
             self.sel = kids
         else:
             p = lyr.parent
@@ -145,16 +146,24 @@ class AppBase:
         self.reveal_in_timeline(self.sel[0])
         self.msg("Selected " + ("children of " + lyr.name if children else "parent " + self.sel[0].name))
 
-    def reveal_in_timeline(self, o):
+    def nd_center_on(self, o):
+        if o is None or not self.r_aux:
+            self.msg("Select something first")
+            return
+        nr, r = self.node_rect(o), self.r_aux
+        self.nd_ox += r.centerx - nr.centerx
+        self.nd_oy += r.centery - nr.centery
+
+    def reveal_in_timeline(self, o, center=False):
         lyr = o.owner or o
         p = lyr.parent
         while p is not None:                                   # open the parents on the way
-            p.expanded = True
+            p.collapsed = False
             p = p.parent
         for i, (kind, ob, _) in enumerate(self.tl_rows()):
             if ob is lyr and kind == "o":
                 reg_h = max(24, self.r_tl.h - 48)
-                if i * 24 < self.tl_vy or i * 24 + 24 > self.tl_vy + reg_h:
+                if center or i * 24 < self.tl_vy or i * 24 + 24 > self.tl_vy + reg_h:
                     self.tl_vy = max(0, i * 24 - reg_h // 2)
                 return
 
@@ -741,7 +750,7 @@ class AppBase:
         if p in self.locked_props(o):
             return
         if not o.locked:
-            if self.auto_key and p in PROPS:                      # Auto Key: every edit becomes a keyframe
+            if self.auto_key and p in PROPS and p not in o.nowatch:   # Auto Key: every edit becomes a keyframe
                 o.keys[p][int(self.frame)] = float(v)
             else:
                 o.set_value(p, self.frame, v)
@@ -792,7 +801,8 @@ class AppBase:
         else:
             vals = {p: o.value(p, f) for p in PROPS}
             for p in PROPS:
-                o.keys[p][f] = vals[p]
+                if p not in o.nowatch:
+                    o.keys[p][f] = vals[p]
             self.msg(f"Keyframe {f} on {o.name}")
 
     def toggle_prop_key(self, o, p):
@@ -800,6 +810,34 @@ class AppBase:
             del o.keys[p][self.frame]
         else:
             o.keys[p][self.frame] = o.value(p, self.frame)
+
+    def kf_copy(self):
+        base = min(f for _, _, f in self.kf_sel)
+        self.kf_clip = []
+        for o, p, f in self.kf_sel:
+            props = [(pp, o.keys[pp][f]) for pp in (PROPS if p is None else (p,)) if f in o.keys[pp]]
+            if props:
+                self.kf_clip.append((o, p, f - base, props, o.ease.get(f) if p is None else None))
+        self.msg(f"Copied {len(self.kf_clip)} keyframe(s) - Ctrl+V pastes them at the playhead")
+
+    def kf_paste(self):
+        srcs = []
+        for c in self.kf_clip:
+            if c[0] not in srcs:
+                srcs.append(c[0])
+        targets = [o for o in self.sel if not o.owner]
+        mapping = {id(srcs[0]): targets} if (len(srcs) == 1 and targets) else {}      # one source layer -> every selected layer
+        new = []
+        for o, p, rel, props, ease in self.kf_clip:
+            for t in mapping.get(id(o), [o]):
+                f = int(clamp(self.frame + rel, 1, self.total))
+                for pp, v in props:
+                    t.keys[pp][f] = v
+                if ease is not None:
+                    t.ease[f] = ease
+                new.append((t, p, f))
+        self.kf_sel = new
+        self.msg(f"Pasted {len(new)} keyframe(s) at frame {self.frame}")
 
     def toggle_auto_key(self, mx=0, my=0):
         self.auto_key = not self.auto_key
@@ -1603,6 +1641,8 @@ class AppBase:
 
     def add_key_at(self, o, p, f):
         for pp in (PROPS if p is None else (p,)):
+            if p is None and pp in o.nowatch:
+                continue
             o.keys[pp][f] = o.value(pp, f)
 
     def read_project(self, path):
@@ -2206,11 +2246,11 @@ class AppBase:
         elif k == pygame.K_SPACE:
             self.toggle_play()
         elif ctrl and k == pygame.K_c:
-            self.copy_sel()
+            self.kf_copy() if (self.kf_sel and self.r_tl.collidepoint(pos)) else self.copy_sel()
         elif ctrl and k == pygame.K_x:
             self.cut_sel()
         elif ctrl and k == pygame.K_v:
-            self.paste()
+            self.kf_paste() if (self.kf_clip and self.r_tl.collidepoint(pos)) else self.paste()
         elif k == pygame.K_d and not ctrl:
             self.default_colors()
         elif k == pygame.K_x and not ctrl:
@@ -2300,14 +2340,31 @@ class AppBase:
         elif e.type == pygame.KEYDOWN:
             self.keydown(e)
 
+    def raise_window(self):
+        try:
+            from pygame._sdl2.video import Window
+            w = Window.from_display_module()
+            w.restore()
+            w.focus()
+        except Exception:  # noqa
+            pass
+
     def update(self, dt):
         now = pygame.time.get_ticks()
+        if RAISE_REQUEST[0]:                                         # the program was started a second time: show this window
+            RAISE_REQUEST[0] = False
+            self.raise_window()
         if self.mode == "splash":
             if now - self.splash_t > 3300:
                 self.leave_splash()
             return
         if self.mode != "main":
             return
+        sel_ids = tuple(id(o) for o in self.sel)                      # a new selection: centre it in the timeline
+        if sel_ids != self._last_sel:
+            self._last_sel = sel_ids
+            if self.psel is not None and self.focus_area != "timeline":
+                self.reveal_in_timeline(self.psel, center=True)
         if self.drag and self.autoscroll and self.btn == 1:        # dragging to the edge scrolls the view
             mx_, my_ = pygame.mouse.get_pos()
             if self.autoscroll == "tl":

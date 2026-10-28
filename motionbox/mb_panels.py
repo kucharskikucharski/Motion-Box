@@ -406,7 +406,7 @@ class PanelsMixin:
     def draw_right(self):
         r = self.r_right
         self.panel(r, "right")
-        self.tabs(r.x, r.y, [("Properties", 80), ("Layers", 72), ("Library", 72)], self.right_tab,
+        self.tabs(r.x, r.y, [("Properties", 80), ("Library", 72)], self.right_tab,
                   lambda n: setattr(self, "right_tab", n))
         prev = self.push_clip(r)
         if self.right_tab == "Properties":                          # long panel: scroll with the wheel
@@ -419,7 +419,7 @@ class PanelsMixin:
                 self.hit_clip = None
             self.right_max = max(0, int(self._content_end + self.right_scroll - (r.bottom - 10)))
         else:
-            {"Layers": self.draw_layers, "Library": self.draw_library}[self.right_tab](r)
+            self.draw_library(r)
         self.pop_clip(prev)
 
     def toggle_paint(self, field):
@@ -906,7 +906,6 @@ class PanelsMixin:
                        ("Properties / Layers / Library", lambda: self.toggle_dock("right"), "", "right" not in self.hidden),
                        ("Timeline", lambda: self.toggle_dock("timeline"), "", "timeline" not in self.hidden), None,
                        ("Properties", lambda: setattr(self, "right_tab", "Properties"), "", None),
-                       ("Layers", lambda: setattr(self, "right_tab", "Layers"), "", None),
                        ("Library", lambda: setattr(self, "right_tab", "Library"), "", None), None,
                        ("Level Strip", lambda: setattr(self, "workspace", "Drawing"), "", None),
                        ("Schematic", lambda: setattr(self, "workspace", "Schematic"), "", None),
