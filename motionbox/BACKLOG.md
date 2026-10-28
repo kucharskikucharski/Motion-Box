@@ -133,3 +133,16 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - [x] Ikony narzędzi w stanach Default / Hover / Active (np. select_default.png, select_hover.png, select_active.png)
 - [x] Splash: animowany status znajdowany automatycznie przy kropce (lewy dolny róg także)
 - [x] Znacznik "a" na warstwie, która jest alfą innej; opcja "Show the matte layer too"
+
+## Zgłoszone przez użytkownika, jeszcze do zrobienia (stan: 28.10.2026)
+- Kości: Edit Skeleton (przesuwanie początków/końców, magnes do anchorów i końców innych kości), limit kąta zgięcia + łuk, widok kości jako kropki, "Show only active skeleton", szkielet humanoidalny jednym kliknięciem
+- IK: kierunek zgięcia jako wartość skokowa (keyframe bez przejść) + wygodniejsze tworzenie (baner z krokami)
+- Timeline: zaznaczanie pojedynczych klatek (Shift = wiele warstw), przesuwanie/usuwanie, zmiana fazy klawiszami W/Q, strzałki góra/dół przy warstwie z wieloma fazami, wyszukiwarka + filtr typu, przesuwana szerokość kolumny z nazwami, skracanie wielu warstw naraz
+- Level Strip: pierwszy rysunek od razu na liście, rysowanie na pustej klatce tworzy nową fazę, przeciąganie faz na puste klatki (zajęte zablokowane)
+- Selekcja: filtr Select (rysunki / pegi / nulle), zaznaczanie tekstu myszą w polach
+- Schematic: wstawianie node'a na połączenie, zmiana nazwy dwuklikiem, podświetlenie warstwy po najechaniu na node
+- Grupy: tryb izolacji (dwuklik w grupę, Esc), prawdziwy Precompose
+- Joystick: zakres ruchu z czterech keyframe'ów (jak w After Effects)
+- Paleta: foldery i nazwy kolorów
+- Menu skrótów z wizualizacją klawiatury
+- Ikony: brakuje Transform, Peg, Edit Skeleton, Animate; Gradient czeka na narzędzie
