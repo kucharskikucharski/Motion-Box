@@ -151,3 +151,4 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - Library: miniatury z prawdziwą zawartością, foldery, przeciąganie w obie strony (do biblioteki i ze sceny)
 - Nodey: grupa jako ramka z zachowaną hierarchią, rozwijana z menu podręcznego, kolor ramki i miniatura; czcionki i plugi skalowane razem z zoomem widoku
 - Zegarek przy wartościach jest też w panelu Properties (na razie tylko na timeline)
+- Timeline: właściwości wartości pokazują się klawiszami P / R / S / T / U; warto dodać prawy klik "Pokaż właściwości" i wspólny wiersz "Transform"

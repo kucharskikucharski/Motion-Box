@@ -74,7 +74,7 @@ class AppBase:
         self.focus_area, self.clip_cut, self.ar_start, self.ar_last, self.rename_dlg = "view", False, {}, 0, None
         self.prefs_tab, self.pref_q = "General", ""
         self.global_key, self.rig_bones, self.auto_key, self.rest_layer, self.parent_drop, self.autoscroll = False, {}, False, None, None, None
-        self.drop_wire, self.kf_clip, self._last_sel = None, [], ()
+        self.drop_wire, self.kf_clip, self._last_sel, self.prop_rects = None, [], (), []
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -750,7 +750,7 @@ class AppBase:
         if p in self.locked_props(o):
             return
         if not o.locked:
-            if self.auto_key and p in PROPS and p not in o.nowatch:   # Auto Key: every edit becomes a keyframe
+            if self.auto_key and p in PROPS and self.watched(o, p):   # Auto Key: every edit of a stopwatch-on value becomes a keyframe
                 o.keys[p][int(self.frame)] = float(v)
             else:
                 o.set_value(p, self.frame, v)
@@ -799,11 +799,13 @@ class AppBase:
                 o.keys[p].pop(f, None)
             self.msg(f"Removed keyframe {f}")
         else:
-            vals = {p: o.value(p, f) for p in PROPS}
-            for p in PROPS:
-                if p not in o.nowatch:
-                    o.keys[p][f] = vals[p]
-            self.msg(f"Keyframe {f} on {o.name}")
+            ps = [p for p in PROPS if self.watched(o, p)]
+            if not ps:
+                self.msg("No stopwatch is on for this layer: press P / R / S / T to show a value and click its stopwatch")
+                return
+            for p in ps:
+                o.keys[p][f] = o.value(p, f)
+            self.msg(f"Keyframe {f} on {o.name}: {', '.join(PROP_LABEL[p] for p in ps)}")
 
     def toggle_prop_key(self, o, p):
         if self.frame in o.keys[p]:
@@ -852,6 +854,40 @@ class AppBase:
         self.rest_layer, self.active_layer, self.sel = lyr, lyr, [lyr]
         self.msg(f"Drawing view: {lyr.name} without the rig and animation. Esc leaves it")
 
+    def watched(self, o, p):
+        return p in o.watch or bool(o.keys[p])
+
+    def set_watch(self, o, p):
+        if p in o.watch or o.keys[p]:                              # switching a stopwatch off removes that value's keyframes
+            if o.keys[p]:
+                self.push_undo()
+                o.keys[p] = {}
+                self.msg(f"{PROP_LABEL[p]}: keyframes removed, the value stays as it is now")
+            if p in o.watch:
+                o.watch.remove(p)
+        else:
+            o.watch.append(p)
+
+    def descendants(self, o):
+        out, stack = [], [o]
+        while stack:
+            cur = stack.pop()
+            for c in self.objs:
+                if c.parent is cur and c not in out:
+                    out.append(c)
+                    stack.append(c)
+        return out
+
+    def key_prop(self, o, p):
+        if p not in o.watch:
+            o.watch.append(p)
+        if self.frame in o.keys[p]:
+            del o.keys[p][self.frame]
+            self.msg(f"{PROP_LABEL[p]}: keyframe {self.frame} removed")
+        else:
+            o.keys[p][self.frame] = o.value(p, self.frame)
+            self.msg(f"{PROP_LABEL[p]}: keyframe {self.frame} on {o.name}")
+
     def toggle_global_key(self, mx=0, my=0):
         self.global_key = not self.global_key
         self.msg("Global keyframe ON: K sets a key on every layer" if self.global_key else "Global keyframe off")
@@ -863,6 +899,11 @@ class AppBase:
                 self.add_key_at(o, None, self.frame)
             self.msg(f"Global keyframe {self.frame} set on {len(self.objs)} layers")
             return
+        pos_ = pygame.mouse.get_pos()                                  # the mouse is over a value row: key only that value
+        for rc, o_, p_ in getattr(self, "prop_rects", []):
+            if rc.collidepoint(pos_):
+                self.key_prop(o_, p_)
+                return
         if any(o.owner for o in self.sel):
             self.msg("Keyframes live on layers - select the layer in the timeline")
             return
@@ -1641,7 +1682,7 @@ class AppBase:
 
     def add_key_at(self, o, p, f):
         for pp in (PROPS if p is None else (p,)):
-            if p is None and pp in o.nowatch:
+            if p is None and not self.watched(o, pp):
                 continue
             o.keys[pp][f] = o.value(pp, f)
 
@@ -2164,6 +2205,7 @@ class AppBase:
         mods = pygame.key.get_mods()
         ctrl = mods & (pygame.KMOD_CTRL | pygame.KMOD_META)
         k = e.key
+        pos = pygame.mouse.get_pos()
         if self.edit:
             ed = self.edit
             sg = self.expr_suggestions()
@@ -2422,31 +2464,37 @@ class AppBase:
         self.update_hover()
         self.update_cursor()
 
+    def safe(self, fn, *a):
+        try:
+            fn(*a)
+        except Exception:  # noqa
+            self.report_crash()
+
     def draw_main(self):
         self.compute_layout()
         self.hits, self.row_rects, self.hover_hint, self.sugg_rects = [], [], None, []
         self.screen.fill(COLOR_BG)
         hid = self.hidden
         if self.maxi == "timeline":
-            self.draw_timeline()
+            self.safe(self.draw_timeline)
         elif self.maxi == "viewport":
-            self.draw_canvas()
+            self.safe(self.draw_canvas)
         elif self.maxi == "aux":
-            self.draw_aux()
+            self.safe(self.draw_aux)
         else:
             if "toolbox" not in hid:
-                self.draw_toolbox()
+                self.safe(self.draw_toolbox)
             if "left" not in hid:
-                self.draw_left()
-            self.draw_canvas()
+                self.safe(self.draw_left)
+            self.safe(self.draw_canvas)
             if self.r_aux:
-                self.draw_aux()
+                self.safe(self.draw_aux)
             if "right" not in hid:
-                self.draw_right()
-            self.draw_transport()
+                self.safe(self.draw_right)
+            self.safe(self.draw_transport)
             if "timeline" not in hid:
-                self.draw_timeline()
-            self.draw_splitters()
+                self.safe(self.draw_timeline)
+            self.safe(self.draw_splitters)
         self.draw_menu_bar()
         self.draw_bar()
         self.draw_toast(self.r_view if self.r_view.w else self.r_aux or self.r_view)

@@ -147,6 +147,8 @@ class CanvasMixin:
             kind = self.cursor_kind
         elif (self.tool == "hand" and inv) or (self.drag and self.btn == 2):
             kind = "hand"
+        elif inv and not self.drag and self.hover is not None and self.hover.kind.startswith("ctrl") and self.tool in ("select", "transform", "animate", "bone_anim"):
+            kind = "rotate" if self.hover.kind == "ctrl_rot" else "move"       # a controller shows what it will do
         elif inv and self.tool in ("select", "transform", "animate") and not self.drag:
             hh = self.handle_hit(*pos)
             if hh:
@@ -164,7 +166,7 @@ class CanvasMixin:
     def apply_cursor(self, kind):
         try:
             sysmap = {"arrow": pygame.SYSTEM_CURSOR_ARROW, "hand": pygame.SYSTEM_CURSOR_HAND, "cross": pygame.SYSTEM_CURSOR_CROSSHAIR,
-                      "sizewe": pygame.SYSTEM_CURSOR_SIZEWE, "sizens": pygame.SYSTEM_CURSOR_SIZENS}
+                      "sizewe": pygame.SYSTEM_CURSOR_SIZEWE, "sizens": pygame.SYSTEM_CURSOR_SIZENS, "move": pygame.SYSTEM_CURSOR_SIZEALL}
             pygame.mouse.set_cursor(sysmap[kind] if kind in sysmap else self.cursor_surface(kind))
         except Exception:  # noqa
             pass
@@ -1233,6 +1235,7 @@ class CanvasMixin:
                 if o not in self.sel:
                     self.sel = [o]
                 self.layer_double_click(o)                                # double-click the name = rename (the layer too)
+                self.reveal_in_timeline(o, center=True)                    # and the timeline shows this layer in the middle
                 items = []
                 for oo in self.sel:
                     self.node_rect(oo)

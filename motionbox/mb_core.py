@@ -347,10 +347,8 @@ def draw_icon(surf, kind, r, col):
     elif kind == "key_f":
         rdiamond(surf, (cx, cy), 7, col, True)
     elif kind == "locate":                      # centre the view on the selection
-        d.circle(surf, col, (cx, cy), 7, 2)
-        d.circle(surf, col, (cx, cy), 2)
-        for ax_, ay_, bx_, by_ in ((-12, 0, -6, 0), (6, 0, 12, 0), (0, -12, 0, -6), (0, 6, 0, 12)):
-            d.line(surf, col, (cx + ax_, cy + ay_), (cx + bx_, cy + by_), 2)
+        d.circle(surf, col, (cx - 2, cy - 2), 7, 2)                 # a magnifying glass
+        d.line(surf, col, (cx + 3, cy + 3), (cx + 10, cy + 10), 3)
     elif kind == "key_auto":                    # auto keyframe: record dot
         d.circle(surf, col, (cx, cy), 10, 2)
         d.circle(surf, col, (cx, cy), 4)
@@ -505,7 +503,7 @@ def ease_t(t, e):
 # ---------------------------------------------------------------- model
 FIELDS = ("name", "kind", "w", "h", "pts", "fill", "fill_on", "fill_a", "stroke_on", "stroke", "stroke_a",
           "stroke_w", "base", "expr", "visible", "locked", "render", "expanded", "label", "node", "phases",
-          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "nowatch")
+          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch")
 
 
 class Obj:
@@ -544,7 +542,7 @@ class Obj:
         self.sides = 6            # polygon: number of corners
         self.drivers = []         # controllers this object follows: [{src, k, lag}]
         self.pin = False          # bones: the joint is locked (rotation cannot be changed)
-        self.nowatch = []         # stopwatch OFF: properties that get no keyframes
+        self.watch = []           # stopwatch ON: the properties that may be keyframed (all off by default)
         self.matte, self.matte_inv, self.caption = None, False, ""   # alpha matte layer (name), inverted?, text shown above sliders
 
     def value(self, prop, f):
