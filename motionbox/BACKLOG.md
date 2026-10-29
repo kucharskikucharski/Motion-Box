@@ -152,3 +152,11 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - Nodey: grupa jako ramka z zachowaną hierarchią, rozwijana z menu podręcznego, kolor ramki i miniatura; czcionki i plugi skalowane razem z zoomem widoku
 - Zegarek przy wartościach jest też w panelu Properties (na razie tylko na timeline)
 - Timeline: właściwości wartości pokazują się klawiszami P / R / S / T / U; warto dodać prawy klik "Pokaż właściwości" i wspólny wiersz "Transform"
+
+## Zgłoszone 29.10.2026, jeszcze otwarte
+- Pozycja X i Y jako jedna wartość "Position" z opcją rozdzielenia (prawy klik)
+- Faza (rysunek) sterowana sliderem - wymaga modelu rysunków/faz (cels) i Level Stripa
+- Paleta: foldery, nazwy kolorów, trzy widoki (kółka / kafelki z nazwą / lista)
+- Library i Footage: zaznaczanie wielu elementów, przeciąganie między timeline / viewerem a biblioteką
+- Zaznaczanie tekstu myszą w polach tekstowych
+- Gradient (narzędzie albo opcja w kolorach)

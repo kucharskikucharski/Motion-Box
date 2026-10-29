@@ -52,7 +52,7 @@ class AppBase:
         self.menu_open, self.maxi = None, None
         self.toast = ("", 0)
         self.view_fit, self.zoom, self.ox, self.oy = True, 0.3, 0.0, 0.0
-        self.view = {"safe": False, "grid3": False, "gray": False, "onion": False, "render": False}
+        self.view = {"safe": False, "grid3": False, "gray": False, "onion": False, "render": False, "camera": False}
         self.def_fill, self.def_stroke = (140, 70, 200), (15, 15, 15)
         self.brush_pts, self.marquee, self.cursor_kind = None, None, None
         self.library, self.lib_scroll = [], 0
@@ -75,6 +75,7 @@ class AppBase:
         self.prefs_tab, self.pref_q = "General", ""
         self.global_key, self.rig_bones, self.auto_key, self.rest_layer, self.parent_drop, self.autoscroll = False, {}, False, None, None, None
         self.drop_wire, self.kf_clip, self._last_sel, self.prop_rects = None, [], (), []
+        self.sel_prop, self._ws_prev, self._ft_t, self.tl_marquee, self.kf_rects = None, None, 0, None, []
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -228,7 +229,7 @@ class AppBase:
         return o
 
     def add_joystick(self, mode, x, y):
-        name = {"x": "Joystick X", "y": "Joystick Y", "xy": "Joystick XY"}[mode]
+        name = {"x": "Slider X", "y": "Slider Y", "xy": "Joystick XY"}[mode]
         w = 200 if "x" in mode else 40
         h = 200 if "y" in mode else 40
         fr = Obj(self.unique_name(name), "rsquare" if mode == "xy" else "pill", x, y, w, h)
@@ -743,6 +744,28 @@ class AppBase:
                 o.expanded = o.u_mode = True
                 o.u_props = None
 
+    def open_right(self, tab):
+        self.hidden.discard("right")
+        self.right_tab = tab
+
+    def is_controller(self, o):
+        if o.kind.startswith("ctrl") or o.limit:
+            return True
+        return o.kind in ("pill", "rsquare") and any(c.parent is o and c.limit for c in self.objs)      # the frame of a joystick / slider
+
+    def trim_at_playhead(self, keep_left):
+        n = 0
+        for o in [x for x in self.sel if not x.owner]:
+            end = o.t_out or self.total
+            if not (o.t_in <= self.frame <= end):
+                continue
+            if keep_left:
+                o.t_out = None if self.frame >= self.total else self.frame
+            else:
+                o.t_in = self.frame
+            n += 1
+        self.msg(f"Trimmed {n} layer(s): kept the part {'before' if keep_left else 'after'} the playhead" if n else "Select a layer under the playhead")
+
     def toggle_dock(self, name):
         self.hidden ^= {name}
 
@@ -904,6 +927,10 @@ class AppBase:
             if rc.collidepoint(pos_):
                 self.key_prop(o_, p_)
                 return
+        sp = self.sel_prop
+        if sp and sp[0] in self.sel:                                  # the value highlighted in the timeline
+            self.key_prop(sp[0], sp[1])
+            return
         if any(o.owner for o in self.sel):
             self.msg("Keyframes live on layers - select the layer in the timeline")
             return
@@ -2222,12 +2249,18 @@ class AppBase:
                 ed["fresh"] = True
             elif ctrl and k in (pygame.K_c, pygame.K_x):
                 self.text_clip = ed["text"]
+                set_clipboard_text(ed["text"])                            # other programs can paste it too
                 if k == pygame.K_x:
                     ed["text"], ed["cur"] = "", 0
             elif ctrl and k == pygame.K_v:
                 if ed["fresh"]:
                     ed["text"], ed["cur"] = "", 0
-                ins = getattr(self, "text_clip", "")
+                ins = get_clipboard_text()
+                if ins is None:
+                    ins = getattr(self, "text_clip", "")
+                ins = (ins.strip().splitlines() or [""])[0]
+                if ed.get("numeric"):
+                    ins = "".join(ch for ch in ins if ch in "0123456789.,-+")
                 ed["text"] = ed["text"][:ed["cur"]] + ins + ed["text"][ed["cur"]:]
                 ed["cur"], ed["fresh"] = ed["cur"] + len(ins), False
             elif k == pygame.K_ESCAPE:
@@ -2297,6 +2330,8 @@ class AppBase:
             self.default_colors()
         elif k == pygame.K_x and not ctrl:
             self.swap_colors()
+        elif k in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET) and (mods & pygame.KMOD_ALT):
+            self.trim_at_playhead(k == pygame.K_LEFTBRACKET)         # Alt+[ keeps the part left of the playhead, Alt+] the part right of it
         elif k == pygame.K_b and not ctrl and (self.r_tl.collidepoint(pos) or (self.workspace == "Schematic" and self.r_aux.collidepoint(pos))):
             self.select_relative(children=bool(mods & pygame.KMOD_SHIFT))     # B = parent, Shift+B = children (over timeline / schematic)
         elif k == pygame.K_u:
@@ -2393,6 +2428,13 @@ class AppBase:
 
     def update(self, dt):
         now = pygame.time.get_ticks()
+        if self.workspace != self._ws_prev:                          # Properties / Library are shown in Animate, hidden in the other workspaces
+            if self._ws_prev is not None:
+                if self.workspace == "Animate":
+                    self.hidden.discard("right")
+                else:
+                    self.hidden.add("right")
+            self._ws_prev = self.workspace
         if RAISE_REQUEST[0]:                                         # the program was started a second time: show this window
             RAISE_REQUEST[0] = False
             self.raise_window()
@@ -2413,6 +2455,14 @@ class AppBase:
                 top, bot = self.r_tl.y + 40, self.r_tl.bottom - 10
                 if my_ < top + 16 or my_ > bot - 16:
                     self.tl_vy = clamp(self.tl_vy + (-12 if my_ < top + 16 else 12), 0, getattr(self, "tl_vmax", 0))
+                    self.drag(mx_, my_)
+            elif self.autoscroll == "view" and self.r_view.w:           # dragging objects to the edge of the viewer moves the view
+                r_, st = self.r_view, 16
+                dx = st if mx_ < r_.x + 24 else (-st if mx_ > r_.right - 24 else 0)
+                dy = st if my_ < r_.y + 24 else (-st if my_ > r_.bottom - 24 else 0)
+                if dx or dy:
+                    self.ox += dx
+                    self.oy += dy
                     self.drag(mx_, my_)
             elif self.autoscroll == "nodes" and self.r_aux.w:
                 r_, st = self.r_aux, 14

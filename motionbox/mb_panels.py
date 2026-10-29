@@ -528,6 +528,12 @@ class PanelsMixin:
             y += 44
         self.divider(x, y, w)
         y += 12
+        if o.kind == "rect":
+            self.txt("Corner radius", x, y + 6, self.f11, COLOR_MUTED)
+            self.field((x + w - 96, y, 96, 28), f"{o.radius:g}",
+                       lambda v: [setattr(s, "radius", clamp(v, 0, min(s.w, s.h) / 2)) for s in self.sel if s.kind == "rect"], "radius", numeric=True,
+                       hint="Rounds the corners. Resizing does not change it. You can also drag the white dots at the corners")
+            y += 38
         self.heading(x, y, "Arrange", "Align to")
         y += 28
         if len(self.sel) >= 2:                                         # two or more objects: align to the artboard or to each other
@@ -690,6 +696,12 @@ class PanelsMixin:
             self.hit(xr, lambda mx, my, idx=idx: self.lib_delete(idx))
 
     # ---------------------------------------------------------------- footage
+    def footage_empty_click(self):
+        now = pygame.time.get_ticks()
+        if now - self._ft_t < 450:
+            self.show_explorer()
+        self._ft_t = now
+
     def draw_footage(self, r, x, y, w):
         self.button((x, y, w // 2 - 4, 32), "Import...", self.show_explorer,
                     hint="Import: browse your disk in Library > Explorer, double-click a file")
@@ -697,6 +709,7 @@ class PanelsMixin:
                     hint="New solid: a flat colour layer (uses the current fill colour)")
         y += 40
         area = pygame.Rect(r.x + 8, y, r.w - 16, r.bottom - y - 56)
+        self.hit(area, lambda mx, my: self.footage_empty_click())          # double-click on the empty area: open the explorer to import
         if not self.footage:
             self.txt("No footage yet.", x, y + 4, self.f12, COLOR_MUTED)
             self.txt("Import images, sequences, video", x, y + 24, self.f11, COLOR_MUTED)
@@ -893,7 +906,7 @@ class PanelsMixin:
             "Type": [("Add Text Layer", soon("Text Layer"), "", None), ("Character...", soon("Character"), "", None)],
             "Effects": [(n, soon(n), "", None) for n in ("Blur", "Glow", "Drop Shadow", "Grain", "Tint")] +
                        [None, ("Open Fx Workspace", lambda: setattr(self, "workspace", "Fx"), "", None)],
-            "View": [("Safe Zone", tog("safe"), "", V["safe"]), ("Grid 3x3", tog("grid3"), "", V["grid3"]),
+            "View": [("Camera View (hide what is outside the artboard)", tog("camera"), "", V["camera"]), ("Safe Zone", tog("safe"), "", V["safe"]), ("Grid 3x3", tog("grid3"), "", V["grid3"]),
                      ("Grayscale", tog("gray"), "", V["gray"]), ("3D View", soon("3D View"), "", None),
                      ("Onion Skin", tog("onion"), "", V["onion"]), ("Render Preview", tog("render"), "", V["render"]), None,
                      ("Set Work Area In", lambda: setattr(self, "work_in", self.frame), "I", None),
@@ -903,10 +916,9 @@ class PanelsMixin:
             "Tools": [(TOOL_INFO[t][0], (lambda t=t: self.set_tool(t)), TOOL_INFO[t][1], self.tool == t) for s in SLOTS if s for t in s],
             "Panels": [("Toolbox", lambda: self.toggle_dock("toolbox"), "", "toolbox" not in self.hidden),
                        ("Edit Panel", lambda: self.toggle_dock("left"), "", "left" not in self.hidden),
-                       ("Properties / Layers / Library", lambda: self.toggle_dock("right"), "", "right" not in self.hidden),
                        ("Timeline", lambda: self.toggle_dock("timeline"), "", "timeline" not in self.hidden), None,
-                       ("Properties", lambda: setattr(self, "right_tab", "Properties"), "", None),
-                       ("Library", lambda: setattr(self, "right_tab", "Library"), "", None), None,
+                       ("Properties", lambda: self.open_right("Properties"), "", "right" not in self.hidden and self.right_tab == "Properties"),
+                       ("Library", lambda: self.open_right("Library"), "", "right" not in self.hidden and self.right_tab == "Library"), None,
                        ("Level Strip", lambda: setattr(self, "workspace", "Drawing"), "", None),
                        ("Schematic", lambda: setattr(self, "workspace", "Schematic"), "", None),
                        ("Expressions", lambda: setattr(self, "workspace", "Expressions"), "", None)],

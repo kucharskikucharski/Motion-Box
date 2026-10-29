@@ -35,7 +35,7 @@ class TimelineMixin:
                 for c in self.objs:
                     if c.parent is o and not free(c):
                         walk(c)
-        free = lambda o: o.kind.startswith("ctrl") or o.kind in ("pill", "rsquare") or bool(o.limit)       # noqa  controllers stand alone
+        free = self.is_controller                             # controllers and joysticks / sliders stand alone
         for o in self.objs:                                  # controllers and joysticks first, always at the top
             if free(o):
                 walk(o)
@@ -311,7 +311,7 @@ class TimelineMixin:
         y0 = tl.y + 32
         reg = pygame.Rect(tl.x + 8, y0, tl.w - 24, max(8, tl.bottom - 8 - y0))
         rows = self.tl_rows()
-        self.prop_rects = []
+        self.prop_rects, self.kf_rects = [], []
         self.tl_vmax = max(0, len(rows) * RH - reg.h)
         self.tl_vy = clamp(self.tl_vy, 0, self.tl_vmax)
         cw = max(4.0, area_w / (self.total + EXTRA)) * self.tl_zoom
@@ -417,7 +417,7 @@ class TimelineMixin:
                 self.row_rects.append((lab, o))
                 self.hit(lab, lambda mx, my, o=o: self.layer_press(o, my, y0))
                 self.hit(lab, lambda mx, my, o=o: self.layer_menu(o, (mx, my)), (3,))
-                if any(c.parent is o and not (c.kind.startswith("ctrl") or c.kind in ("pill", "rsquare") or c.limit) for c in self.objs):
+                if any(c.parent is o and not self.is_controller(c) for c in self.objs):
                     ch = pygame.Rect(tl.x + 12, y + 2, 20, 20)             # only a layer with children can be unfolded
                     draw_icon(self.screen, "tri_r" if o.collapsed else "tri_d", ch, (200, 200, 200))
                     if self.hovering(ch):
@@ -458,7 +458,11 @@ class TimelineMixin:
                 self.pop_clip(pcl)
             else:
                 self.rrect(lab, (32, 33, 38), 6)
-                self.txt(PROP_LABEL[p], tl.x + 60, y + 6, self.f11, COLOR_MUTED)
+                lab = pygame.Rect(tl.x + 58, y, LCW - 72, RH - 2)
+                if self.sel_prop == (o, p):                                  # the value that K will key is highlighted
+                    self.rrect(lab, COLOR_ACCENT, 6)
+                self.hit(lab, lambda mx, my, o=o, p=p: setattr(self, "sel_prop", (o, p)))
+                self.txt(PROP_LABEL[p], tl.x + 60, y + 6, self.f11, COLOR_MUTED if self.sel_prop != (o, p) else (255, 255, 255))
                 swr = pygame.Rect(tl.x + 36, y + 2, 20, RH - 4)                 # stopwatch: keyframes for this value on / off
                 on = self.watched(o, p)
                 scol = COLOR_ACCENT_L if on else (95, 95, 102)
@@ -519,6 +523,7 @@ class TimelineMixin:
                 rdiamond(self.screen, ctr, sz + 2, (14, 14, 18), True)         # dark outline separates them from the lines
                 rdiamond(self.screen, ctr, sz, COLOR_YELLOW if selk else ((255, 255, 255) if kind == "o" else (200, 200, 210)), True)
                 rowk.append((pygame.Rect(int(ctr[0]) - 7, y + 5, 14, 14).clip(cells), item))
+                self.kf_rects.append(rowk[-1])
             self.pop_clip(pc)
             row = pygame.Rect(cx0, y, area_w, RH - 2).clip(reg)
             self.row_rects.append((row, o))
@@ -526,14 +531,26 @@ class TimelineMixin:
                 self.prop_rects.append((pygame.Rect(tl.x + 8, y, LCW + area_w + 8, RH - 2).clip(reg), o, p))
 
             def left(mx, my, o=o):
+                x0, y0, base = mx, my, list(self.kf_sel) if shift() else []
+                moved = [False]
                 if not shift():
                     self.kf_sel = []
-                if o not in self.sel:
-                    self.select(o)
-                self.goto(frame_at(mx))
 
-                def d(mx, my):
-                    self.goto(frame_at(mx))
+                def d(mx, my):                                  # drag on the empty grid: a rectangle selects keyframes
+                    if not moved[0] and math.hypot(mx - x0, my - y0) < 5:
+                        return
+                    moved[0] = True
+                    self.tl_marquee = pygame.Rect(min(x0, mx), min(y0, my), abs(mx - x0), abs(my - y0))
+                    hit_ = [it for rc, it in self.kf_rects if rc.colliderect(self.tl_marquee)]
+                    self.kf_sel = base + [it for it in hit_ if it not in base]
+
+                def end():
+                    self.tl_marquee = None
+                    if not moved[0]:                           # a plain click: move the playhead and drop the layer selection
+                        self.goto(frame_at(x0))
+                        if not shift():
+                            self.sel = []
+                self.drag_end = end
                 return d
             self.hit(row, left)
             self.hit(row, lambda mx, my, o=o, p=p, kind=kind: self.cell_menu(o, None if kind == "o" else p, frame_at(mx), (mx, my)), (3,))
@@ -578,6 +595,8 @@ class TimelineMixin:
                 self.hit(re_l, self.trim_drag(o, True, frame_at))
                 self.hit(re_r, self.trim_drag(o, False, frame_at))
         self.pop_clip(prev_all)
+        if self.tl_marquee:                                    # keyframe selection rectangle
+            pygame.draw.rect(self.screen, COLOR_ACCENT_L, self.tl_marquee, 1)
         if self.parent_drop:                                  # drop target: the whole parent row is highlighted
             pr = pygame.Rect(tl.x + 6, self.parent_drop[1], tl.w - 12, RH)
             pygame.draw.rect(self.screen, COLOR_ACCENT_L, pr, 2, border_radius=6)

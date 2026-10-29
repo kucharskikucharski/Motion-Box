@@ -55,6 +55,10 @@ class CanvasMixin:
             tp = self.a2s(*self.bone_end(o))
             if math.hypot(mx - tp[0], my - tp[1]) <= 9:
                 return ("tip", 0)
+        if o.kind == "rect":
+            for i, dp in enumerate(self.radius_dots(o)):
+                if math.hypot(mx - dp[0], my - dp[1]) <= 7:
+                    return ("radius", i)
         for i, hp in enumerate(hps):
             if not o.kind.startswith("ctrl") and o.kind != "bone" and abs(mx - hp[0]) <= 6 and abs(my - hp[1]) <= 6:
                 return ("resize", i)
@@ -66,6 +70,33 @@ class CanvasMixin:
             if 6 < d <= 24 and math.hypot(mx - cx, my - cy) > math.hypot(hp[0] - cx, hp[1] - cy):
                 return ("rotate", i)
         return None
+
+    def radius_dots(self, o):
+        x, y, s, rot = self.world(o, self.frame)
+        hw, hh = o.w / 2, o.h / 2
+        inset = clamp(o.radius + 12 / (self.zoom * max(s, 0.01)), 4, min(hw, hh) * 0.95)
+        out = []
+        for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            out.append(self.a2s(*self.xf(x, y, s, rot, sx * (hw - inset) - o.anchor[0], sy * (hh - inset) - o.anchor[1])))
+        return out
+
+    def start_radius(self, o):
+        self.radius_drag = True
+
+        def drag(mx, my):
+            ax, ay = self.s2a(mx, my)
+            x, y, s, rot = self.world(o, self.frame)
+            a = math.radians(-rot)
+            dx, dy = ax - x, ay - y
+            lx = (dx * math.cos(a) - dy * math.sin(a)) / max(s, 0.01) + o.anchor[0]
+            ly = (dx * math.sin(a) + dy * math.cos(a)) / max(s, 0.01) + o.anchor[1]
+            inset = min(o.w / 2 - abs(lx), o.h / 2 - abs(ly))
+            o.radius = round(clamp(inset - 12 / (self.zoom * max(s, 0.01)), 0, min(o.w, o.h) / 2), 1)
+
+        def end():
+            self.radius_drag = False
+        self.drag_end = end
+        return drag
 
     def hit_obj(self, o, ax, ay):
         x, y, s, r = self.world(o, self.frame)
@@ -325,6 +356,8 @@ class CanvasMixin:
                 return self.start_rotate(rc_, key=self.auto_key)
         hh = self.handle_hit(mx, my) if not (self.psel and self.psel.kind == "bone") else None
         if hh:
+            if hh[0] == "radius":
+                return self.start_radius(self.psel)
             if hh[0] == "tip":
                 return self.start_tip(self.psel)
             return self.start_resize(self.psel, hh[1]) if hh[0] == "resize" else self.start_rotate(self.psel)
@@ -356,6 +389,7 @@ class CanvasMixin:
         items = [(o, *self.world(o, self.frame)[:2]) for o in self.sel if not o.locked]
         if not items:
             return
+        self.autoscroll = "view"
         axis = [None]
         a0x, a0y = self.s2a(mx, my)
         pts = [self.s2a(*q) for q in self.box_pts(items[0][0], 0)]
@@ -919,7 +953,7 @@ class CanvasMixin:
             self.draw_alpha(pts, o.fill_a * op, lambda sf, p: pygame.draw.polygon(sf, o.fill, p))
         if o.kind in ("null", "peg") and o not in self.sel:         # selected nulls show the selection box instead
             cx, cy = self.a2s(x, y)                       # a null looks like a bare bounding box
-            col = self.label_color(o)
+            col = shade(self.label_color(o), 0.5)                 # not selected: dimmed, so the selected one stands out
             pygame.draw.lines(self.screen, col, True, pts, 1)
             mids = [((pts[i][0] + pts[(i + 1) % 4][0]) / 2, (pts[i][1] + pts[(i + 1) % 4][1]) / 2) for i in range(4)]
             for q in pts + mids:
@@ -992,6 +1026,19 @@ class CanvasMixin:
                 if o.caption:                                  # slider / controller name above the object
                     bp = self.box_pts(o, 6)
                     self.txt(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - 16, self.f11, o.caption_color or (230, 230, 235), center=True)
+        if self.view.get("camera"):                                  # camera view: nothing outside the artboard
+            vr = self.r_view
+            for rc in (pygame.Rect(vr.x, vr.y, vr.w, ab.y - vr.y), pygame.Rect(vr.x, ab.bottom, vr.w, vr.bottom - ab.bottom),
+                       pygame.Rect(vr.x, ab.y, ab.x - vr.x, ab.h), pygame.Rect(ab.right, ab.y, vr.right - ab.right, ab.h)):
+                if rc.w > 0 and rc.h > 0:
+                    pygame.draw.rect(self.screen, COLOR_VIEWPORT, rc)
+        o_ = self.psel                                              # a rectangle shows round white dots at its corners: drag = round the corners
+        if o_ is not None and o_.kind == "rect" and len(self.sel) == 1 and not o_.locked and self.rest_layer is None:
+            mp = pygame.mouse.get_pos()
+            for dp in self.radius_dots(o_):
+                if getattr(self, "radius_drag", False) or math.hypot(mp[0] - dp[0], mp[1] - dp[1]) < 70:
+                    pygame.draw.circle(self.screen, (255, 255, 255), (int(dp[0]), int(dp[1])), 5)
+                    pygame.draw.circle(self.screen, (30, 30, 30), (int(dp[0]), int(dp[1])), 5, 1)
         if self.view["onion"]:
             for o in self.objs:
                 if o.visible and not o.kind.startswith("ctrl") and o.kind not in ("null", "peg"):
@@ -1559,21 +1606,17 @@ class CanvasMixin:
     def draw_levelstrip(self, r):
         """Drawing workspace: tabs Colors (palette + a permanent colour wheel) and Level Strip."""
         x = r.x + 24
-        for i, n in enumerate(("Colors", "Level Strip")):
-            self.button((x + i * 116, r.y + 16, 108, 28), n, lambda mx, my, n=n: setattr(self, "drawing_tab", n),
-                        active=self.drawing_tab == n, font=self.f11)
-        area = pygame.Rect(r.x, r.y + 52, r.w, r.h - 52)
-        prev = self.push_clip(area)
-        self.hit_clip = area
-        try:
-            y = r.y + 60 - int(self.aux_scroll)
-            if self.drawing_tab == "Colors":
-                self.draw_colors_tab(r, x, y)
-            else:
-                self.draw_level_tab(r, x, y)
-        finally:
-            self.hit_clip = None
-            self.pop_clip(prev)
+        top = pygame.Rect(r.x, r.y, r.w, int(r.h * 0.62))              # the colours (above) and the level strip (below) are always visible
+        bot = pygame.Rect(r.x, top.bottom, r.w, r.h - top.h)
+        for sub, fn, scroll in ((top, self.draw_colors_tab, int(self.aux_scroll)), (bot, self.draw_level_tab, 0)):
+            prev = self.push_clip(sub)
+            self.hit_clip = sub
+            try:
+                fn(sub, x, sub.y + 16 - scroll)
+            finally:
+                self.hit_clip = None
+                self.pop_clip(prev)
+        pygame.draw.line(self.screen, COLOR_LINE, (r.x + 16, top.bottom), (r.right - 16, top.bottom))
 
     def draw_colors_tab(self, r, x, y):
         self.txt("PALETTE", x, y, self.fb2)

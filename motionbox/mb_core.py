@@ -117,8 +117,8 @@ TOOL_INFO = {
     "animate": ("Animate", "A", "Select and move only pegs or only controllers (choose in the bar at the top); everything else is protected."),
     "zoom": ("Zoom", "Z", "Click to zoom in, Alt+click to zoom out."),
     "view_rotate": ("Rotate View", "", "Coming soon: rotate the artboard view."),
-    "joy_x": ("Joystick X", "", "Click to place a joystick limited to the X axis."),
-    "joy_y": ("Joystick Y", "", "Click to place a joystick limited to the Y axis."),
+    "joy_x": ("Slider X", "", "Click to place a slider that moves only along the X axis."),
+    "joy_y": ("Slider Y", "", "Click to place a slider that moves only along the Y axis."),
     "joy_xy": ("Joystick XY", "", "Click to place a joystick that moves on both axes."),
     "bone": ("Create Bones", "J", "Drag to draw a bone. Start the next bone on the end of the last one to chain them."),
     "anchor": ("Anchor Point", "Y", "Drag to move the pivot of the selected object (it rotates and scales around it). Hold Ctrl to snap to the box corners, edges, centre and the artboard centre."),
@@ -318,6 +318,50 @@ def cursor_png(kind):
     return _icon_cache[key][0]
 
 
+def _clip_cmd(write):
+    import sys
+    if sys.platform == "darwin":
+        return ["pbcopy"] if write else ["pbpaste"]
+    if sys.platform.startswith("win"):
+        return ["clip"] if write else ["powershell", "-NoProfile", "-Command", "Get-Clipboard"]
+    return ["xclip", "-selection", "clipboard"] + ([] if write else ["-o"])
+
+
+def get_clipboard_text():
+    """Text copied in ANY program (hex colours, names ...). None if the system clipboard cannot be read."""
+    import subprocess
+    try:
+        pygame.scrap.init()
+        raw = pygame.scrap.get(pygame.SCRAP_TEXT)
+        if raw:
+            return (raw.decode("utf-8", "ignore") if isinstance(raw, bytes) else str(raw)).replace("\x00", "")
+    except Exception:  # noqa
+        pass
+    try:
+        kw = {"creationflags": 0x08000000} if sys.platform.startswith("win") else {}
+        out = subprocess.run(_clip_cmd(False), capture_output=True, timeout=2, **kw)
+        if out.returncode == 0:
+            return out.stdout.decode("utf-8", "ignore")
+    except Exception:  # noqa
+        pass
+    return None
+
+
+def set_clipboard_text(t):
+    import subprocess
+    try:
+        pygame.scrap.init()
+        pygame.scrap.put(pygame.SCRAP_TEXT, t.encode("utf-8"))
+        return
+    except Exception:  # noqa
+        pass
+    try:
+        kw = {"creationflags": 0x08000000} if sys.platform.startswith("win") else {}
+        subprocess.run(_clip_cmd(True), input=t.encode("utf-8"), timeout=2, **kw)
+    except Exception:  # noqa
+        pass
+
+
 def load_icon(name, size=30):
     return load_icon_state(name, size, "default")[0]
 
@@ -503,7 +547,7 @@ def ease_t(t, e):
 # ---------------------------------------------------------------- model
 FIELDS = ("name", "kind", "w", "h", "pts", "fill", "fill_on", "fill_a", "stroke_on", "stroke", "stroke_a",
           "stroke_w", "base", "expr", "visible", "locked", "render", "expanded", "label", "node", "phases",
-          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch")
+          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius")
 
 
 class Obj:
@@ -543,6 +587,7 @@ class Obj:
         self.drivers = []         # controllers this object follows: [{src, k, lag}]
         self.pin = False          # bones: the joint is locked (rotation cannot be changed)
         self.watch = []           # stopwatch ON: the properties that may be keyframed (all off by default)
+        self.radius = 0           # rectangle: corner radius (not changed by resizing)
         self.matte, self.matte_inv, self.caption = None, False, ""   # alpha matte layer (name), inverted?, text shown above sliders
 
     def value(self, prop, f):
@@ -638,6 +683,8 @@ def _raw_pts(o, frame=1):
         return [(px * o.w, py * o.h) for px, py in o.pts_at(frame)], bool(o.closed and k == "brush")
     if k == "ctrl":
         return [(x * hw, y * hh) for x, y in CTRL_SHAPE], True
+    if k == "rect" and o.radius > 0:
+        return rrect_pts(hw, hh, min(o.radius, hw, hh)), True
     return [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)], True
 
 
