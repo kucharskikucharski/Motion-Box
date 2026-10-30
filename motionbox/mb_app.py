@@ -76,6 +76,7 @@ class AppBase:
         self.global_key, self.rig_bones, self.auto_key, self.rest_layer, self.parent_drop, self.autoscroll = False, {}, False, None, None, None
         self.drop_wire, self.kf_clip, self._last_sel, self.prop_rects = None, [], (), []
         self.sel_prop, self._ws_prev, self._ft_t, self.tl_marquee, self.kf_rects = None, None, 0, None, []
+        self.ph_sel, self.ph_play, self.ph_prev = set(), False, None
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -121,6 +122,20 @@ class AppBase:
             null.keys["x"][f], null.keys["y"][f] = x, y
         box = Obj("Box Object", "rect", 1010, 490, 200, 200)
         self.objs, self.sel, self.frame = [null, box], [box], 1
+
+    @property
+    def frame(self):
+        return self._frame
+
+    @frame.setter
+    def frame(self, v):
+        self._frame = v
+        Obj.CUR[0] = int(v)
+        sel = getattr(self, "sel", None)
+        if sel:                                              # shapes of another phase are not on the screen any more
+            keep = [s for s in sel if not s.owner or s in s.owner.items]
+            if len(keep) != len(sel):
+                self.sel = keep
 
     @property
     def psel(self):
@@ -757,11 +772,13 @@ class AppBase:
         n = 0
         for o in [x for x in self.sel if not x.owner]:
             end = o.t_out or self.total
-            if not (o.t_in <= self.frame <= end):
+            if keep_left and self.frame < o.t_in:
                 continue
-            if keep_left:
+            if not keep_left and self.frame > end:
+                continue
+            if keep_left:                                    # Alt+]  keeps the part before the playhead (or stretches the layer to it)
                 o.t_out = None if self.frame >= self.total else self.frame
-            else:
+            else:                                            # Alt+[  keeps the part after the playhead (or stretches the layer back to it)
                 o.t_in = self.frame
             n += 1
         self.msg(f"Trimmed {n} layer(s): kept the part {'before' if keep_left else 'after'} the playhead" if n else "Select a layer under the playhead")
@@ -971,12 +988,44 @@ class AppBase:
             self.msg("Phases live inside a drawing layer - select a vector / raster layer")
             return
         f = self.frame
-        if f not in o.phases:
+        if f in o.phases:
+            self.msg(f"Frame {f} already starts a drawing")
+            return
+        o.phases.append(f)
+        o.phases.sort()
+        o._pitems[f] = []                                    # a blank drawing of its own: it does not change the other ones
+        self.sel = []
+        self.msg(f"New blank drawing starts at frame {f}")
+
+    def clone_items(self, o, items):
+        out = [Obj.from_dict(it.to_dict()) for it in items]
+        for it in out:
+            it.parent = it.owner = o
+        return out
+
+    def phase_set(self, o, f, items):
+        if f not in o.phases and f > 1 or (f == 1 and f not in o.phases):
             o.phases.append(f)
             o.phases.sort()
-        if o.kind in ("brush", "line"):
-            o.phase_pts[f] = list(o.pts_at(f))
-        self.msg(f"New phase at frame {f}")
+        o._pitems[f] = items
+
+    def phase_duplicate(self, o, key):
+        f = self.frame if self.frame not in o.phases else self.frame + 1
+        f = int(clamp(f, 1, self.total))
+        self.phase_set(o, f, self.clone_items(o, o._pitems.get(key, [])))
+        self.goto(f)
+        self.msg(f"Drawing duplicated to frame {f}")
+
+    def phase_delete(self, o, keys):
+        for k in keys:
+            if k == 0:
+                o._pitems[0] = []
+            elif k in o.phases:
+                o.phases.remove(k)
+                o._pitems.pop(k, None)
+        self.sel = []
+        self.ph_sel = set()
+        self.msg("Drawing deleted")
 
     def jump_phase(self, d):
         o = self.psel
@@ -2331,7 +2380,7 @@ class AppBase:
         elif k == pygame.K_x and not ctrl:
             self.swap_colors()
         elif k in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET) and (mods & pygame.KMOD_ALT):
-            self.trim_at_playhead(k == pygame.K_LEFTBRACKET)         # Alt+[ keeps the part left of the playhead, Alt+] the part right of it
+            self.trim_at_playhead(k == pygame.K_RIGHTBRACKET)        # Alt+[ keeps the part right of the playhead, Alt+] the part left of it
         elif k == pygame.K_b and not ctrl and (self.r_tl.collidepoint(pos) or (self.workspace == "Schematic" and self.r_aux.collidepoint(pos))):
             self.select_relative(children=bool(mods & pygame.KMOD_SHIFT))     # B = parent, Shift+B = children (over timeline / schematic)
         elif k == pygame.K_u:
@@ -2455,6 +2504,12 @@ class AppBase:
                 top, bot = self.r_tl.y + 40, self.r_tl.bottom - 10
                 if my_ < top + 16 or my_ > bot - 16:
                     self.tl_vy = clamp(self.tl_vy + (-12 if my_ < top + 16 else 12), 0, getattr(self, "tl_vmax", 0))
+                    self.drag(mx_, my_)
+            elif self.autoscroll == "tlh" and getattr(self, "tl_cells", None):      # playhead dragged to the edge of the timeline
+                c_ = self.tl_cells
+                dx = -16 if mx_ < c_.x + 20 else (16 if mx_ > c_.right - 20 else 0)
+                if dx:
+                    self.tl_off = clamp(self.tl_off + dx, 0, self.tl_max)
                     self.drag(mx_, my_)
             elif self.autoscroll == "view" and self.r_view.w:           # dragging objects to the edge of the viewer moves the view
                 r_, st = self.r_view, 16

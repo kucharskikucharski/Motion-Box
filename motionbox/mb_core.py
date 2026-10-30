@@ -575,7 +575,7 @@ class Obj:
         self.u_mode, self.node_open, self.u_props = False, False, None
         self.src = None           # footage id this layer was made from (image / sequence / solid)
         self.anchor = (0.0, 0.0)  # pivot, relative to the shape centre; the object's position is the anchor point
-        self.items = []           # shapes drawn inside a vector layer ("vlayer")
+        self._pitems = {0: []}    # vector layer: the shapes of every drawing (phase): {0: first drawing, frame: drawing starting there}
         self.owner = None         # the vector layer this shape belongs to
         self.surf, self.png = None, None      # raster layer pixels / saved png (assets/...)
         self.ik = None            # two-bone IK: {role, other, target, flip}
@@ -611,6 +611,23 @@ class Obj:
         else:
             self.base[prop] = float(v)
 
+    CUR = [1]                  # the frame the program shows right now
+
+    def phase_key(self, f):
+        ks = [p for p in self.phases if p <= f]
+        return max(ks) if ks else 0
+
+    @property
+    def items(self):           # the shapes of the drawing that is active at the current frame
+        return self._pitems.setdefault(self.phase_key(Obj.CUR[0]), [])
+
+    @items.setter
+    def items(self, v):
+        self._pitems[self.phase_key(Obj.CUR[0])] = v
+
+    def items_at(self, f):
+        return self._pitems.get(self.phase_key(f), [])
+
     def key_frames(self, prop=None):
         if prop:
             return sorted(self.keys[prop])
@@ -625,7 +642,8 @@ class Obj:
 
     def to_dict(self):
         d = {k: getattr(self, k) for k in FIELDS}
-        d["items"] = [it.to_dict() for it in self.items]
+        d["items"] = [it.to_dict() for it in self._pitems.get(0, [])]
+        d["phase_items"] = {str(k): [it.to_dict() for it in v] for k, v in self._pitems.items() if k != 0}
         d["keys"] = {p: {str(f): v for f, v in self.keys[p].items()} for p in PROPS}
         d["ease"] = {str(f): list(e) for f, e in self.ease.items()}
         d["phase_pts"] = {str(f): p for f, p in self.phase_pts.items()}
@@ -644,9 +662,15 @@ class Obj:
         o.limit = tuple(o.limit) if o.limit else None
         o.anchor = tuple(o.anchor)
         o.caption_color = tuple(o.caption_color) if o.caption_color else None
-        o.items = [Obj.from_dict(x) for x in d.get("items", [])]
-        for it in o.items:
-            it.parent = it.owner = o
+        o._pitems = {0: [Obj.from_dict(x) for x in d.get("items", [])]}
+        for k, v in d.get("phase_items", {}).items():
+            o._pitems[int(k)] = [Obj.from_dict(x) for x in v]
+        for ph in o.phases:                                  # old projects: every phase starts as a copy of the first drawing
+            if ph not in o._pitems:
+                o._pitems[ph] = [Obj.from_dict(x) for x in d.get("items", [])]
+        for lst in o._pitems.values():
+            for it in lst:
+                it.parent = it.owner = o
         o.pts = [tuple(p) for p in o.pts]
         o.keys = {p: {int(f): v for f, v in d.get("keys", {}).get(p, {}).items()} for p in PROPS}
         o.ease = {int(f): tuple(e) for f, e in d.get("ease", {}).items()}

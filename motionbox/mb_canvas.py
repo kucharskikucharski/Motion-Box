@@ -894,7 +894,7 @@ class CanvasMixin:
     def draw_tree(self, o, f=None, ghost=None):
         f = f or self.frame
         if o.kind == "vlayer":
-            for it in reversed(o.items):
+            for it in reversed(o.items_at(f)):
                 if it.visible:
                     self.draw_obj(it, f, ghost)
         else:
@@ -954,13 +954,7 @@ class CanvasMixin:
         if o.kind in ("null", "peg") and o not in self.sel:         # selected nulls show the selection box instead
             cx, cy = self.a2s(x, y)                       # a null looks like a bare bounding box
             col = shade(self.label_color(o), 0.5)                 # not selected: dimmed, so the selected one stands out
-            pygame.draw.lines(self.screen, col, True, pts, 1)
-            mids = [((pts[i][0] + pts[(i + 1) % 4][0]) / 2, (pts[i][1] + pts[(i + 1) % 4][1]) / 2) for i in range(4)]
-            for q in pts + mids:
-                self.rrect((q[0] - 3, q[1] - 3, 7, 7), col, 2)
-            self.rrect((cx - 6, cy - 6, 12, 12), col, 2, 1)
-            pygame.draw.line(self.screen, col, (cx - 9, cy), (cx + 9, cy))
-            pygame.draw.line(self.screen, col, (cx, cy - 9), (cx, cy + 9))
+            pygame.draw.lines(self.screen, col, True, pts, 1)          # a plain square frame: no anchor, no resize squares
         if o.stroke_on:
             w = max(1, int(o.stroke_w * s * self.zoom))
 
@@ -1021,7 +1015,7 @@ class CanvasMixin:
         pygame.draw.rect(self.screen, self.art_color, ab)
         src = self.matte_sources()
         for o in reversed(self.objs):
-            if o.visible and self.in_range(o) and o.name not in src and not (self.view["render"] and not o.render) and (self.rest_layer is None or o is self.rest_layer):
+            if o.visible and self.in_range(o) and o.name not in src and not (self.view["render"] and (not o.render or o.kind in ("null", "peg", "bone") or o.kind.startswith("ctrl") or self.is_controller(o))) and (self.rest_layer is None or o is self.rest_layer):
                 self.draw_layer(o)
                 if o.caption:                                  # slider / controller name above the object
                     bp = self.box_pts(o, 6)
@@ -1040,8 +1034,13 @@ class CanvasMixin:
                     pygame.draw.circle(self.screen, (255, 255, 255), (int(dp[0]), int(dp[1])), 5)
                     pygame.draw.circle(self.screen, (30, 30, 30), (int(dp[0]), int(dp[1])), 5, 1)
         if self.view["onion"]:
+            scope = set()                                          # onion skin: only the selected layers and the layers parented to them
+            for s_ in self.sel:
+                l_ = s_.owner or s_
+                scope.add(id(l_))
+                scope.update(id(d_) for d_ in self.descendants(l_))
             for o in self.objs:
-                if o.visible and not o.kind.startswith("ctrl") and o.kind not in ("null", "peg"):
+                if id(o) in scope and o.visible and not o.kind.startswith("ctrl") and o.kind not in ("null", "peg"):
                     for k in range(1, self.onion["before"] + 1):
                         if self.frame - k >= 1:
                             self.draw_tree(o, self.frame - k, shade((255, 90, 90), 1.0 - (k - 1) * 0.18))
@@ -1124,7 +1123,8 @@ class CanvasMixin:
     def draw_view_icons(self, v):
         """View toggles in the top-right corner of the viewport."""
         items = [("render", "Render preview: show only layers enabled for render"), ("grid3", "Grid 3x3"),
-                 ("safe", "Safe zone"), ("gray", "Grayscale"), ("onion", "Onion skin"), ("threed", "3D view (coming soon)")]
+                 ("safe", "Safe zone"), ("gray", "Grayscale"), ("onion", "Onion skin (selected layers and their children)"),
+                 ("camera", "Camera view: hide everything outside the artboard"), ("threed", "3D view (coming soon)")]
         x = v.right - 8 - 32 * len(items)
         col, d = (235, 235, 235), pygame.draw
         for key, hint in items:
@@ -1149,6 +1149,10 @@ class CanvasMixin:
             elif key == "gray":
                 d.circle(self.screen, col, (cx, cy), 8, 2)
                 d.circle(self.screen, col, (cx, cy), 8, 0, draw_top_left=True, draw_bottom_left=True)
+            elif key == "camera":
+                d.rect(self.screen, col, (cx - 9, cy - 5, 18, 13), 2, border_radius=3)
+                d.circle(self.screen, col, (cx, cy + 1), 3, 2)
+                d.rect(self.screen, col, (cx - 4, cy - 8, 8, 3))
             elif key == "onion":
                 d.circle(self.screen, col, (cx - 3, cy), 6, 2)
                 d.circle(self.screen, col, (cx + 3, cy), 6, 2)
@@ -1415,7 +1419,7 @@ class CanvasMixin:
                 self.screen.blit(sm, sm.get_rect(center=rc.center))
             return
         polys = []
-        for it in (reversed(o.items) if o.kind == "vlayer" else [o]):
+        for it in (reversed(o.items_at(fr)) if o.kind == "vlayer" else [o]):
             pts, closed = shape_pts(it, fr)
             if o.kind == "vlayer":
                 b = it.base
@@ -1649,29 +1653,94 @@ class CanvasMixin:
 
     def draw_level_tab(self, r, x, y):
         o = self.psel
+        lyr = (o.owner or o) if o else None
         self.txt("LEVEL STRIP", x, y, self.fb2)
-        y += 32
-        if not o:
-            self.txt("Select a layer to see its drawings.", x, y, self.f12, COLOR_MUTED)
+        y += 30
+        if not lyr or lyr.kind not in ("vlayer", "rlayer"):
+            self.txt("Select a drawing layer to see its drawings.", x, y, self.f12, COLOR_MUTED)
             return
-        self.txt(o.name, x, y, self.fb)
+        self.txt(lyr.name, x, y, self.fb)
         y += 24
-        self.button((x, y, 120, 32), "+ New Phase", lambda mx, my: self.add_phase(o), color=COLOR_ACCENT_L,
-                    radius=16, hint="Start a new drawing (phase) on this layer at the current frame")
-        self.checkbox(x + 136, y + 8, self.auto_phase, lambda mx, my: setattr(self, "auto_phase", not self.auto_phase),
-                      "Auto-create a phase for every new brush stroke")
-        self.txt("Auto-create", x + 160, y + 9)
-        y += 48
-        self.txt("Phases (W / Q = next / previous)", x, y, self.f11, COLOR_MUTED)
-        y += 24
-        for i, f in enumerate(sorted(o.phases)):
-            cx, cy = x + (i % 5) * 72, y + (i // 5) * 80
-            card = pygame.Rect(cx, cy, 64, 72)
-            self.rrect(card, COLOR_ACCENT if f == self.frame else COLOR_BTN, 8)
-            th = pygame.Rect(cx + 8, cy + 8, 48, 36)
-            self.node_thumb(o, th, f)                          # the real drawing of this phase / layer
-            self.txt(f"F {f}", cx + 32, cy + 58, self.f11, center=True)
-            self.hit(card, lambda mx, my, f=f: self.goto(f))
+        w = r.w - 2 * (x - r.x)
+        if lyr.kind == "rlayer":
+            self.txt("Raster layers keep one drawing for now.", x, y, self.f11, COLOR_MUTED)
+            return
+        keys = ([0] if (not lyr.phases or lyr.phases[0] > 1) else []) + sorted(lyr.phases)
+        cur = lyr.phase_key(self.frame)
+        # ---- big preview with a small play button: plays the drawings one after another
+        pv = pygame.Rect(x, y, w, 112)
+        now = pygame.time.get_ticks()
+        shown = self.ph_prev if (self.ph_prev in keys) else cur
+        if self.ph_play and keys:
+            shown = keys[(now // 140) % len(keys)]
+        self.node_thumb(lyr, pv, max(1, shown))
+        pb = pygame.Rect(pv.right - 28, pv.bottom - 28, 22, 22)
+        self.rrect(pb, (0, 0, 0, 150) if False else (20, 20, 24), 11)
+        if self.ph_play:
+            pygame.draw.rect(self.screen, (235, 235, 235), (pb.x + 6, pb.y + 6, 4, 10))
+            pygame.draw.rect(self.screen, (235, 235, 235), (pb.x + 12, pb.y + 6, 4, 10))
+        else:
+            pygame.draw.polygon(self.screen, (235, 235, 235), [(pb.x + 7, pb.y + 5), (pb.x + 7, pb.y + 17), (pb.x + 17, pb.y + 11)])
+        self.hit(pb, lambda mx, my: setattr(self, "ph_play", not self.ph_play))
+        y += 122
+        # ---- buttons
+        bw = (w - 8) // 3
+        self.button((x, y, bw, 30), "+ New", lambda mx, my: self.add_phase(lyr), color=COLOR_ACCENT_L, radius=15, font=self.f11,
+                    hint="A blank drawing starts at the playhead - the other drawings stay as they are")
+        self.button((x + bw + 4, y, bw, 30), "Duplicate", lambda mx, my: self.phase_duplicate(lyr, cur), radius=15, font=self.f11,
+                    hint="Copy the active drawing into a new one right after the playhead")
+        self.button((x + 2 * (bw + 4), y, bw, 30), "Delete", lambda mx, my: self.phase_delete(lyr, list(self.ph_sel) or [cur]), radius=15, font=self.f11,
+                    hint="Delete the selected drawings")
+        y += 40
+        self.checkbox(x, y + 2, self.auto_phase, lambda mx, my: setattr(self, "auto_phase", not self.auto_phase), "Auto-create a drawing for every new brush stroke")
+        self.txt("Auto-create", x + 24, y + 3, self.f11)
+        y += 28
+        self.txt("Drawings  (click = go to, Shift / Ctrl = several, drag onto the timeline = place)", x, y, self.f11, COLOR_MUTED)
+        y += 22
+        per = max(1, int((w + 8) // 72))
+        for i, k in enumerate(keys):
+            cx, cy = x + (i % per) * 72, y + (i // per) * 82
+            card = pygame.Rect(cx, cy, 64, 74)
+            sel = k in self.ph_sel
+            self.rrect(card, COLOR_ACCENT if k == cur else COLOR_BTN, 8)
+            if sel:
+                self.rrect(card, (255, 255, 255), 8, 2)
+            th = pygame.Rect(cx + 6, cy + 6, 52, 40)
+            self.node_thumb(lyr, th, max(1, k))
+            self.txt(f"F {max(1, k)}", cx + 32, cy + 58, self.f11, center=True)
+            if self.hovering(card):
+                self.ph_prev = k
+            self.hit(card, lambda mx, my, k=k, keys=keys, lyr=lyr: self.level_click(lyr, k, keys, mx, my))
+            self.hit(card, lambda mx, my, k=k, lyr=lyr: setattr(self, "ctx", {"pos": (mx, my), "items": [
+                ("Go to this drawing", lambda: self.goto(max(1, k))), ("Duplicate", lambda: self.phase_duplicate(lyr, k)),
+                ("Delete", lambda: self.phase_delete(lyr, [k]))]}), (3,))
+
+    def level_click(self, lyr, k, keys, mx, my):
+        mods = pygame.key.get_mods()
+        if mods & pygame.KMOD_SHIFT and self.ph_sel:                 # a range
+            last = max(self.ph_sel, key=lambda q: abs(q - k)) if self.ph_sel else k
+            a, b = sorted((keys.index(last) if last in keys else 0, keys.index(k)))
+            self.ph_sel = set(keys[a:b + 1])
+        elif mods & pygame.KMOD_CTRL:
+            self.ph_sel ^= {k}
+        else:
+            self.ph_sel = {k}
+        self.goto(max(1, k))
+        x0, y0 = mx, my
+
+        def drag(mx, my):
+            pass
+
+        def end():                                                      # dropped on the timeline: the drawing is placed at that frame
+            mp = pygame.mouse.get_pos()
+            if self.r_tl.collidepoint(mp) and math.hypot(mp[0] - x0, mp[1] - y0) > 12 and getattr(self, "tl_frame_at", None):
+                f = self.tl_frame_at(mp[0])
+                for q in sorted(self.ph_sel or {k}):
+                    self.phase_set(lyr, int(clamp(f, 1, self.total)), self.clone_items(lyr, lyr._pitems.get(q, [])))
+                    f += 1
+                self.msg(f"Drawing placed on the timeline at frame {f - len(self.ph_sel or {k})}")
+        self.drag_end = end
+        return drag
 
     def draw_fx(self, r):
         x, y = r.x + 16, r.y + 16

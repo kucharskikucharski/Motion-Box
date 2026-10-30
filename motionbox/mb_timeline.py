@@ -114,6 +114,7 @@ class TimelineMixin:
         i0, e0 = o.t_in, o.t_out or self.total
         keys0 = {p: dict(o.keys[p]) for p in PROPS}
         ease0, ph0, tout0 = dict(o.ease), list(o.phases), o.t_out
+        pit0 = dict(o._pitems)
         last = [0]
 
         def drag(mx, my):
@@ -126,6 +127,8 @@ class TimelineMixin:
             o.keys = {p: {max(1, f + d): v for f, v in keys0[p].items()} for p in PROPS}      # keyframes travel with the layer
             o.ease = {max(1, f + d): e for f, e in ease0.items()}
             o.phases = [max(1, f + d) for f in ph0]
+            o._pitems = {0: pit0.get(0, [])}                  # every drawing travels with its phase
+            o._pitems.update({max(1, f + d): pit0[f] for f in ph0 if f in pit0})
         return drag
 
     def marker_click(self, m):
@@ -324,12 +327,14 @@ class TimelineMixin:
         self.tl_off = clamp(self.tl_off, 0, self.tl_max)
         off = self.tl_off
         cells = pygame.Rect(cx0, tl.y, area_w, tl.h)
+        self.tl_cells = cells
         fx = lambda f: cx0 + (f - 1) * cw - off             # noqa
         f0 = max(1, int(off // cw) + 1)
         f1 = min(int((off + area_w) // cw) + 2, self.total + EXTRA)
 
         def frame_at(mx):
-            return self.tl_snap(int(clamp((mx - cx0 + off) // cw + 1, 1, self.total)))
+            return self.tl_snap(int(clamp((mx - cx0 + self.tl_off) // cw + 1, 1, self.total)))
+        self.tl_frame_at = lambda mx: int(clamp((mx - cx0 + self.tl_off) // cw + 1, 1, self.total))
 
         def pan(mx, my):                                    # middle mouse drag = pan
             sx, sy, o0, v0 = mx, my, self.tl_off, self.tl_vy
@@ -352,6 +357,9 @@ class TimelineMixin:
         self.flat_button(plus, lambda mx, my: setattr(self, "layer_dlg", True), "New layer: choose vector or raster")
         pygame.draw.line(self.screen, (225, 225, 225), (plus.centerx - 6, plus.centery), (plus.centerx + 6, plus.centery), 2)
         pygame.draw.line(self.screen, (225, 225, 225), (plus.centerx, plus.centery - 6), (plus.centerx, plus.centery + 6), 2)
+        for i_, (lab_, kind_) in enumerate((("+ Peg", "peg"), ("+ Null", "null"))):        # peg / null straight from the timeline
+            self.button((tl.x + 172 + i_ * 62, tl.y + 4, 58, 24), lab_, lambda mx, my, kind_=kind_: self.new_obj(kind_, self.aw // 2, self.ah // 2),
+                        radius=8, font=self.f11, hint="New " + kind_)
         pc = self.push_clip(cells)
         step = 1 if cw >= 28 else (5 if cw >= 9 else 10)
         for f in range(f0, f1 + 1):
@@ -364,6 +372,7 @@ class TimelineMixin:
         self.pop_clip(pc)
 
         def scrub(mx, my):
+            self.autoscroll = "tlh"                             # the view follows when the playhead is dragged to the edge
             self.goto(frame_at(mx))
 
             def d(mx, my):
@@ -500,10 +509,10 @@ class TimelineMixin:
                         lo2, hi2 = min(d.t_in for d in ds), max((d.t_out or self.total) for d in ds)
                         pygame.draw.rect(self.screen, mix(lc, (255, 255, 255), 0.55), (fx(lo2), y + RH - 7, (hi2 - lo2 + 1) * cw - 1, 3))
                         pygame.draw.line(self.screen, (255, 255, 255), (fx(hi2) + cw - 1, y + RH - 10), (fx(hi2) + cw - 1, y + RH - 3), 2)
-                for ph_f in o.phases:                      # new drawing phase: divider + black dot
+                for ph_f in o.phases:                      # a new drawing starts here: a light divider and a small light dot
                     px = fx(ph_f)
-                    pygame.draw.line(self.screen, (20, 20, 24), (px, y + 4), (px, y + 20))
-                    pygame.draw.circle(self.screen, (0, 0, 0), (int(px + cw / 2), y + 12), 3)
+                    pygame.draw.line(self.screen, mix(lc, (255, 255, 255), 0.6), (px, y + 3), (px, y + RH - 5), 2)
+                    pygame.draw.circle(self.screen, mix(lc, (255, 255, 255), 0.9), (int(px + cw / 2 + 1), y + 12), 3)
                 for a, b in zip(kf, kf[1:]):
                     xa, xb = fx(a) + cw / 2, fx(b) + cw / 2
                     pygame.draw.line(self.screen, (235, 235, 240), (xa, y + 12), (xb, y + 12))

@@ -160,3 +160,11 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - Library i Footage: zaznaczanie wielu elementów, przeciąganie między timeline / viewerem a biblioteką
 - Zaznaczanie tekstu myszą w polach tekstowych
 - Gradient (narzędzie albo opcja w kolorach)
+
+## Zgłoszone 30.10.2026, jeszcze otwarte
+- Zaznaczanie klatek na warstwie (pojedynczych, kilku, Shift) z przesuwaniem / usuwaniem / wycinaniem / wklejaniem i zmianą fazy klawiszami W / Q
+- Level Strip: zaznaczanie fazy prostokątem; panel Library z takim samym podglądem i odtwarzaniem
+- Rysowanie na pustej klatce samo tworzy nową fazę; warstwy rastrowe z wieloma fazami
+- Select: wspólny bounding box wielu zaznaczonych obiektów (skala, pozycja, rotacja); Animate: ikona rombu, animacja całych warstw i nulli
+- Nody: wstawianie noda między Table a pozostałe
+- Narzędzie Text
