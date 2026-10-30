@@ -168,3 +168,12 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - Select: wspólny bounding box wielu zaznaczonych obiektów (skala, pozycja, rotacja); Animate: ikona rombu, animacja całych warstw i nulli
 - Nody: wstawianie noda między Table a pozostałe
 - Narzędzie Text
+
+## Zrobione 30.10.2026 (podczas nieobecności użytkownika)
+- Library: prawdziwe miniatury, zaznaczanie wielu (Shift / Ctrl), foldery, przeciąganie z biblioteki do viewera / timeline i z timeline / viewera do biblioteki
+- Footage: zaznaczanie wielu, przeciąganie na scenę
+- Explorer: zaznaczanie wielu plików, "Import selected", opcja "Import numbered files as a sequence"
+- Paleta: nazwy kolorów, foldery, trzy widoki (kółka / kafelki z nazwą / lista)
+
+## Nadal otwarte
+- Zaznaczanie klatek na warstwie (move / delete / cut / paste, W / Q), pozycja X i Y jako jedna wartość z opcją rozdzielenia, zaznaczanie tekstu myszą, gradient, narzędzie Text, grupy w nodeach

@@ -390,6 +390,7 @@ class CanvasMixin:
         if not items:
             return
         self.autoscroll = "view"
+        self._move_undo = [(o_, dict(o_.base), {p: dict(o_.keys[p]) for p in PROPS}) for o_, *_ in items]
         axis = [None]
         a0x, a0y = self.s2a(mx, my)
         pts = [self.s2a(*q) for q in self.box_pts(items[0][0], 0)]
@@ -1624,24 +1625,93 @@ class CanvasMixin:
 
     def draw_colors_tab(self, r, x, y):
         self.txt("PALETTE", x, y, self.fb2)
-        y += 28
-        sw, per = 28, max(1, (r.w - 48) // 34)
-        for i in range(len(self.palette) + 1):
-            rc = pygame.Rect(x + (i % per) * 34, y + (i // per) * 34, sw, sw)
-            if i < len(self.palette):
-                c = self.palette[i]
-                self.rrect(rc, c, 14)
-                if tuple(c) == tuple(self.def_fill):
-                    self.rrect(rc, (255, 255, 255), 14, 2)
-                self.hit(rc, lambda mx, my, c=c: self.apply_palette(c))
-                self.hit(rc, lambda mx, my, i=i: (self.palette.pop(i), self.save_prefs()), (3,))
+        bx = r.right - 24 - 3 * 30                                    # three views: circles, rounded tiles with names, list
+        for k, (mode, hint) in enumerate((("circles", "Circles"), ("tiles", "Rounded tiles with the names"), ("list", "List"))):
+            rc = pygame.Rect(bx + k * 30, y - 4, 26, 26)
+            self.flat_button(rc, lambda mx, my, m=mode: (setattr(self, "pal_view", m), self.save_prefs()), hint, self.pal_view == mode)
+            cx, cy = rc.center
+            if mode == "circles":
+                pygame.draw.circle(self.screen, (225, 225, 225), (cx, cy), 6, 2)
+            elif mode == "tiles":
+                pygame.draw.rect(self.screen, (225, 225, 225), (cx - 8, cy - 5, 16, 10), 2, border_radius=4)
             else:
-                self.rrect(rc, (48, 48, 48), 14)
-                self.txt("+", rc.centerx, rc.centery, self.fb2, COLOR_TEXT, center=True)
-                self.hit(rc, lambda mx, my: (self.palette.append(tuple(self.color_get("fill")[0])), self.save_prefs()))
-            if self.hovering(rc):
-                self.hover_hint = "Click: use colour / right-click: remove" if i < len(self.palette) else "Add the current fill colour to the palette"
-        y += ((len(self.palette) + per) // per) * 34 + 12
+                for dy in (-5, 0, 5):
+                    pygame.draw.line(self.screen, (225, 225, 225), (cx - 7, cy + dy), (cx + 7, cy + dy), 2)
+        y += 30
+        W = r.w - 48
+        cx0 = x                                                       # folders
+        for name, val in [("All", None)] + [(f, f) for f in self.pal_folders] + [("+ Folder", "__new__")]:
+            tw = self.f11.size(name)[0] + 20
+            if cx0 + tw > x + W:
+                cx0, y = x, y + 28
+            rc = pygame.Rect(cx0, y, tw, 24)
+            if val == "__new__":
+                self.button(rc, name, lambda mx, my: self.begin_edit("palfolder", "", self.pal_add_folder), radius=12, font=self.f11,
+                            hint="New folder, e.g. one for every character")
+            else:
+                self.button(rc, name, lambda mx, my, v=val: setattr(self, "pal_open", v), active=self.pal_open == val, radius=12, font=self.f11)
+                if val is not None:
+                    self.hit(rc, lambda mx, my, v=val: self.pal_folder_menu(v, (mx, my)), (3,))
+            cx0 += tw + 6
+        y += 32
+        ed_id = self.edit.get("id", "") if self.edit else ""
+        if ed_id == "palfolder" or ed_id.startswith("palname_"):       # typing a folder name or a colour name
+            self.txt("Folder name:" if ed_id == "palfolder" else "Colour name:", x, y + 6, self.f11, COLOR_MUTED)
+            self.field((x + 92, y, W - 92, 28), "", self.edit["cb"], ed_id)
+            y += 34
+        vis = [i for i, e in enumerate(self.palette) if self.pal_open is None or e["folder"] == self.pal_open]
+        view = self.pal_view
+        add_rc = None
+        for n in range(len(vis) + 1):
+            if view == "circles":
+                per = max(1, W // 34)
+                rc = pygame.Rect(x + (n % per) * 34, y + (n // per) * 34, 28, 28)
+            elif view == "tiles":
+                per = max(1, (W + 6) // 90)
+                rc = pygame.Rect(x + (n % per) * 90, y + (n // per) * 34, 84, 28)
+            else:
+                rc = pygame.Rect(x, y + n * 30, W, 26)
+            if n < len(vis):
+                i = vis[n]
+                e = self.palette[i]
+                c = e["c"]
+                lum = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]
+                tc = (20, 20, 20) if lum > 140 else (245, 245, 245)
+                label = e["name"] or "#%02X%02X%02X" % tuple(int(v) for v in c)
+                if view == "circles":
+                    self.rrect(rc, c, 14)
+                    if tuple(c) == tuple(self.def_fill):
+                        self.rrect(rc, (255, 255, 255), 14, 2)
+                elif view == "tiles":
+                    self.rrect(rc, c, 10)
+                    if tuple(c) == tuple(self.def_fill):
+                        self.rrect(rc, (255, 255, 255), 10, 2)
+                    pcl = self.push_clip(rc)
+                    self.txt(label, rc.centerx, rc.centery, self.f11, tc, center=True)
+                    self.pop_clip(pcl)
+                else:
+                    self.rrect(rc, COLOR_HOVER if self.hovering(rc) else (34, 34, 38), 8)
+                    sw = pygame.Rect(rc.x + 4, rc.y + 3, 20, 20)
+                    self.rrect(sw, c, 10)
+                    self.txt(label, rc.x + 32, rc.y + 5, self.f11)
+                    self.txt("#%02X%02X%02X" % tuple(int(v) for v in c), rc.right - 8, rc.y + 5, self.f11, COLOR_MUTED, right=True)
+                self.hit(rc, lambda mx, my, c=c: self.apply_palette(c))
+                self.hit(rc, lambda mx, my, i=i: self.pal_menu(i, (mx, my)), (3,))
+                if self.hovering(rc):
+                    self.hover_hint = (e["name"] + "  " if e["name"] else "") + "Click: use the colour / right-click: rename, move to a folder, delete"
+            else:
+                add_rc = rc
+                self.rrect(rc, (48, 48, 48), 14 if view == "circles" else 10)
+                self.txt("+" if view != "list" else "+ Add the current colour", rc.centerx, rc.centery, self.fb2 if view != "list" else self.f11, COLOR_TEXT, center=True)
+                self.hit(rc, lambda mx, my: (self.palette.append({"c": tuple(self.color_get("fill")[0]), "name": "", "folder": self.pal_open}), self.save_prefs()))
+                if self.hovering(rc):
+                    self.hover_hint = "Add the current fill colour to the palette" + (f" (folder {self.pal_open})" if self.pal_open else "")
+        if view == "circles":
+            y += (len(vis) // max(1, W // 34) + 1) * 34 + 12
+        elif view == "tiles":
+            y += (len(vis) // max(1, (W + 6) // 90) + 1) * 34 + 12
+        else:
+            y += (len(vis) + 1) * 30 + 12
         dp = self.dock_picker                                  # the colour wheel stays visible here, bound to the fill colour
         rgb, a = self.color_get("fill")
         if tuple(hsv_to_rgb(dp["h"], dp["s"], dp["v"])) != tuple(rgb) and not self.drag:

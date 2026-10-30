@@ -668,32 +668,65 @@ class PanelsMixin:
         if self.lib_mode == "Explorer":
             self.draw_explorer(r, x, y, w)
             return
-        self.button((x, y, w // 2 - 4, 32), "Save selected", self.lib_save_selected, radius=8)
+        self.button((x, y, w // 2 - 4, 32), "Save selected", self.lib_save_selected, radius=8,
+                    hint="Save the selected objects in the library (you can also drag a layer from the timeline into this panel)")
         self.button((x + w // 2 + 4, y, w // 2 - 4, 32), "From project...", lambda mx, my: self.open_dialog(
             "LIBRARY", "Import objects from a project", PROJECTS_DIR, "", "Import", self.import_to_library, dirs=True), radius=8)
-        y += 48
-        if not self.library:
-            self.txt("The library is empty.", x, y, self.f11, COLOR_MUTED)
-            self.txt("Save the selected object or import", x, y + 16, self.f11, COLOR_MUTED)
-            self.txt("objects from another project.", x, y + 32, self.f11, COLOR_MUTED)
+        y += 42
+        folders = [e["_folder"] for e in self.library if "_folder" in e]
+        cx = x                                                       # folder chips
+        for name, val in [("All", None)] + [(f, f) for f in folders] + [("+ Folder", "__new__")]:
+            tw = self.f11.size(name)[0] + 22
+            if cx + tw > x + w:
+                cx, y = x, y + 30
+            rc = pygame.Rect(cx, y, tw, 26)
+            if val == "__new__":
+                self.button(rc, name, lambda mx, my: self.begin_edit("libfolder", "", self.lib_add_folder), radius=13, font=self.f11,
+                            hint="New folder: type a name and press Enter")
+            else:
+                self.button(rc, name, lambda mx, my, v=val: setattr(self, "lib_folder", v), active=self.lib_folder == val, radius=13, font=self.f11)
+                if val is not None:
+                    self.hit(rc, lambda mx, my, v=val: self.lib_folder_menu(v, (mx, my)), (3,))
+            cx += tw + 6
+        y += 34
+        if self.edit and self.edit.get("id") == "libfolder":
+            self.field((x, y, w, 28), "", self.lib_add_folder, "libfolder")
+            y += 34
+        vis = [i for i, e in enumerate(self.library) if "_folder" not in e and (self.lib_folder is None or e.get("lib_folder") == self.lib_folder)]
+        self._lib_visible = vis
+        self.lib_sel &= set(vis)
+        if self.lib_sel:
+            self.button((x, y, w // 2 - 4, 28), f"Insert ({len(self.lib_sel)})", lambda mx, my: self.lib_insert_selected(), color=COLOR_ACCENT_L,
+                        radius=14, font=self.f11, hint="Put the selected objects in the scene (or double-click / drag one to the viewer)")
+            self.button((x + w // 2 + 4, y, w // 2 - 4, 28), f"Delete ({len(self.lib_sel)})", lambda mx, my: self.lib_delete_selected(), radius=14,
+                        font=self.f11)
+            y += 36
+        if not vis:
+            self.txt("Nothing here yet.", x, y, self.f11, COLOR_MUTED)
+            self.txt("Save the selected objects, drag a layer", x, y + 16, self.f11, COLOR_MUTED)
+            self.txt("from the timeline here, or import objects", x, y + 32, self.f11, COLOR_MUTED)
+            self.txt("from another project.", x, y + 48, self.f11, COLOR_MUTED)
             return
         cw = (w - 8) // 2
-        for idx in range(self.lib_scroll * 2, len(self.library)):
-            i = idx - self.lib_scroll * 2
-            cx, cy = x + (i % 2) * (cw + 8), y + (i // 2) * 104
+        pc = self.push_clip(pygame.Rect(r.x, y, r.w, r.bottom - y))
+        for n, idx in enumerate(vis[self.lib_scroll * 2:]):
+            cx, cy = x + (n % 2) * (cw + 8), y + (n // 2) * 104
             if cy > r.bottom:
                 break
             card = pygame.Rect(cx, cy, cw, 96)
-            self.rrect(card, COLOR_HOVER if self.hovering(card) else COLOR_BTN, 12)
+            sel = idx in self.lib_sel
+            self.rrect(card, COLOR_ACCENT if sel else (COLOR_HOVER if self.hovering(card) else COLOR_BTN), 12)
             d = self.library[idx]
-            th = pygame.Rect(0, 0, 40, 40)
-            th.center = (card.centerx, card.y + 36)
-            self.rrect(th, tuple(d["fill"]), 8)
-            self.txt(d["name"][:16], card.centerx, card.bottom - 16, self.f11, center=True)
-            self.hit(card, lambda mx, my, idx=idx: self.lib_insert(idx))
-            xr = pygame.Rect(card.right - 24, card.y + 4, 20, 20)
-            self.txt("x", xr.centerx, xr.centery, self.fb, COLOR_MUTED, center=True)
-            self.hit(xr, lambda mx, my, idx=idx: self.lib_delete(idx))
+            th = pygame.Rect(card.x + 8, card.y + 8, card.w - 16, 56)
+            lo = self.lib_obj(idx)
+            if lo is not None:
+                self.node_thumb(lo, th)                                  # the real picture of the object
+            else:
+                self.rrect(th, tuple(d.get("fill", (60, 60, 64))), 8)
+            self.txt(d["name"][:18], card.centerx, card.bottom - 16, self.f11, center=True)
+            self.hit(card, lambda mx, my, idx=idx: self.lib_click(idx, mx, my))
+            self.hit(card, lambda mx, my, idx=idx: self.lib_card_menu(idx, (mx, my)), (3,))
+        self.pop_clip(pc)
 
     # ---------------------------------------------------------------- footage
     def footage_empty_click(self):
@@ -720,7 +753,7 @@ class PanelsMixin:
             rc = pygame.Rect(x, y + i * 44, w, 40)
             if rc.y > area.bottom:
                 break
-            sel = fo["id"] == self.foot_sel
+            sel = fo["id"] == self.foot_sel or fo["id"] in self.foot_multi
             self.rrect(rc, COLOR_ACCENT if sel else (COLOR_HOVER if self.hovering(rc) else COLOR_BTN), 8)
             th = pygame.Rect(rc.x + 6, rc.y + 6, 40, 28)
             self.footage_thumb(fo, th)
@@ -730,11 +763,11 @@ class PanelsMixin:
                    "video": "Video (linked)", "audio": "Audio (linked)", "solid": "Solid"}[fo["type"]]
             self.txt(sub + ("" if fo["id"] in used else "  - unused"), rc.x + 52, rc.y + 22, self.f11, COLOR_MUTED)
             self.pop_clip(pcl)
-            self.hit(rc, lambda mx, my, fid=fo["id"]: self.footage_click(fid))
+            self.hit(rc, lambda mx, my, fid=fo["id"]: self.footage_click(fid, mx, my))
             self.hit(rc, lambda mx, my, fid=fo["id"]: self.footage_menu(fid, (mx, my)), (3,))
         self.pop_clip(pc)
-        self.button((x, r.bottom - 48, w, 32), "Add to Scene", lambda mx, my: self.add_footage(), color=COLOR_ACCENT_L, radius=16,
-                    hint="Add the selected footage to the scene (or double-click it). Right-click for more.")
+        self.button((x, r.bottom - 48, w, 32), "Add to Scene", lambda mx, my: self.add_footage_selected(), color=COLOR_ACCENT_L, radius=16,
+                    hint="Add the selected footage (Shift / Ctrl = several) to the scene, or double-click / drag it to the viewer. Right-click for more.")
 
     def footage_thumb(self, fo, rc):
         self.rrect(rc, (22, 22, 24), 6)
@@ -766,15 +799,26 @@ class PanelsMixin:
         name, kind = entries[idx]
         now = pygame.time.get_ticks()
         dbl = self.ex_click[0] == idx and now - self.ex_click[1] < 400
+        mods = pygame.key.get_mods()
+        if mods & pygame.KMOD_CTRL:
+            self.ex_multi ^= {idx}
+        elif mods & pygame.KMOD_SHIFT and self.ex_sel is not None:
+            a, b = sorted((self.ex_sel, idx))
+            self.ex_multi = set(range(a, b + 1))
+        else:
+            self.ex_multi = {idx}
         self.ex_sel, self.ex_click = idx, (idx, now)
         if not dbl:
             return
+        if kind == "file" and len(self.ex_multi) > 1:
+            self.import_selected()
+            return
         if kind == "up":
-            self.ex_dir, self.ex_scroll, self.ex_sel = os.path.dirname(self.ex_dir), 0, None
+            self.ex_dir, self.ex_scroll, self.ex_sel, self.ex_multi = os.path.dirname(self.ex_dir), 0, None, set()
         elif kind == "dir":
-            self.ex_dir, self.ex_scroll, self.ex_sel = os.path.join(self.ex_dir, name), 0, None
+            self.ex_dir, self.ex_scroll, self.ex_sel, self.ex_multi = os.path.join(self.ex_dir, name), 0, None, set()
         else:
-            self.import_footage(os.path.join(self.ex_dir, name))
+            self.import_footage(os.path.join(self.ex_dir, name), self.ex_seq)
 
     def draw_explorer(self, r, x, y, w):
         self.button((x, y, w // 2 - 4, 28), "Project", lambda mx, my: self.set_ex_dir(self.project_dir), radius=8, hint="Jump to the project folder")
@@ -785,14 +829,14 @@ class PanelsMixin:
         entries = self.ex_entries()
         self.ex_n = len(entries)
         self.ex_scroll = int(clamp(self.ex_scroll, 0, max(0, len(entries) - 8)))
-        area = pygame.Rect(r.x + 8, y, r.w - 16, r.bottom - y - 8)
+        area = pygame.Rect(r.x + 8, y, r.w - 16, r.bottom - y - 84)
         pc = self.push_clip(area)
         for k, idx in enumerate(range(self.ex_scroll, len(entries))):
             rc = pygame.Rect(x, y + k * 34, w, 32)
             if rc.y > area.bottom:
                 break
             name, kind = entries[idx]
-            self.rrect(rc, COLOR_ACCENT if idx == self.ex_sel else (COLOR_HOVER if self.hovering(rc) else COLOR_PANEL), 8)
+            self.rrect(rc, COLOR_ACCENT if (idx == self.ex_sel or idx in self.ex_multi) else (COLOR_HOVER if self.hovering(rc) else COLOR_PANEL), 8)
             ic = pygame.Rect(rc.x + 4, rc.y + 4, 24, 24)
             full = os.path.join(self.ex_dir, name)
             low = os.path.splitext(name)[1].lower()
@@ -810,12 +854,17 @@ class PanelsMixin:
             self.pop_clip(pcl)
             self.hit(rc, lambda mx, my, idx=idx, entries=entries: self.ex_open(idx, entries))
             if kind == "file" and low in IMG_EXT + VID_EXT + AUD_EXT:
-                self.hit(rc, lambda mx, my, full=full: setattr(self, "ctx", {"pos": (mx, my), "items": [("Import to footage", lambda: self.import_footage(full))]}), (3,))
+                self.hit(rc, lambda mx, my, full=full: setattr(self, "ctx", {"pos": (mx, my), "items": [("Import to footage", lambda: self.import_footage(full, self.ex_seq))]}), (3,))
         self.pop_clip(pc)
+        self.checkbox(x, r.bottom - 78, self.ex_seq, lambda mx, my: setattr(self, "ex_seq", not self.ex_seq),
+                      "Numbered files (img_001, img_002 ...) are imported as one image sequence")
+        self.txt("Import numbered files as a sequence", x + 28, r.bottom - 77, self.f11)
+        self.button((x, r.bottom - 46, w, 34), "Import selected", lambda mx, my: self.import_selected(), color=COLOR_ACCENT_L, radius=17,
+                    hint="Import the selected files (Shift / Ctrl = several). Double-click a file imports just that one.")
 
     def set_ex_dir(self, d):
         if d and os.path.isdir(d):
-            self.ex_dir, self.ex_scroll, self.ex_sel = os.path.abspath(d), 0, None
+            self.ex_dir, self.ex_scroll, self.ex_sel, self.ex_multi = os.path.abspath(d), 0, None, set()
         else:
             self.msg("Folder not found")
 

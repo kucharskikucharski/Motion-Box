@@ -170,6 +170,9 @@ class TimelineMixin:
         def end():
             r, self.reorder = self.reorder, None
             pd, self.parent_drop = self.parent_drop, None
+            if moved[0] and self.lib_target(pygame.mouse.get_pos()):            # dropped into the Library panel: saved there
+                self.lib_save_objs([x for x in self.objs if x in self.sel] if o in self.sel else [o])
+                return
             if pd and moved[0]:
                 group = [x for x in self.objs if x in self.sel] if o in self.sel else [o]
                 n = 0

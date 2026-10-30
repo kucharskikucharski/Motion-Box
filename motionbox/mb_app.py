@@ -92,7 +92,11 @@ class AppBase:
         self.nd_zoom, self.nd_ox, self.nd_oy = 1.0, 0.0, 0.0           # node panel view
         self.art_color, self.hidden, self.sel_anchor = COLOR_ARTBOARD, {"right"}, None       # the right dock starts closed (Panels menu opens it)
         self.brush_opts = {"auto_close": False, "auto_group": False, "auto_fill": False, "draw_under": False}
-        self.palette = [tuple(c) for _, c in LABEL_DEFAULT_LIST[:8]]
+        self.palette = [{"c": tuple(c), "name": "", "folder": None} for _, c in LABEL_DEFAULT_LIST[:8]]
+        self.pal_folders, self.pal_view, self.pal_open = [], "circles", None
+        self.lib_sel, self.lib_folder, self._lib_cache, self._lib_click, self._lib_visible = set(), None, {}, (None, 0), []
+        self.foot_multi = set()
+        self.ex_multi, self.ex_seq = set(), True
         self.hint_since, self._last_hint, self.nd_marquee, self.bone_last = 0, None, None, None
         self.link_start, self.tl_edges = (0, 0), []
         self.bone_chain, self.active_layer, self.layer_dlg = False, None, False
@@ -1240,11 +1244,66 @@ class AppBase:
         self.footage = [f for f in self.footage if f["id"] in used]
         self.msg(f"Removed {n - len(self.footage)} unused footage item(s)")
 
-    def footage_click(self, fid):
+    def ex_seq_key(self, path):
+        stem, ext = os.path.splitext(os.path.basename(path))
+        m = re.match(r"^(.*?)(\d+)$", stem)
+        return (os.path.dirname(path), m.group(1), len(m.group(2)), ext.lower()) if m else None
+
+    def import_selected(self):
+        entries = self.ex_entries()
+        idxs = sorted(self.ex_multi | ({self.ex_sel} if self.ex_sel is not None else set()))
+        files = [os.path.join(self.ex_dir, entries[i][0]) for i in idxs if i < len(entries) and entries[i][1] == "file"]
+        if not files:
+            self.msg("Select one or more files in the list first")
+            return
+        seen, n = set(), 0
+        for p in files:
+            k = self.ex_seq_key(p)
+            if self.ex_seq and k:                                # numbered files that belong together become ONE sequence
+                if k in seen:
+                    continue
+                seen.add(k)
+            self.import_footage(p, self.ex_seq)
+            n += 1
+        self.msg(f"Imported {n} item(s)")
+
+    def add_footage_selected(self):
+        ids = [f["id"] for f in self.footage if f["id"] in self.foot_multi or f["id"] == self.foot_sel]
+        before = len(self.objs)
+        for fid in ids:
+            self.add_footage(fid)
+        made = self.objs[:max(0, len(self.objs) - before)] if len(self.objs) > before else []
+        if len(made) > 1:
+            self.sel = made
+
+    def footage_click(self, fid, mx=0, my=0):
         now = pygame.time.get_ticks()
-        if self.foot_click[0] == fid and now - self.foot_click[1] < 400:
-            self.add_footage(fid)                                # double-click = add to scene
+        dbl = self.foot_click[0] == fid and now - self.foot_click[1] < 400
+        mods = pygame.key.get_mods()
+        if mods & pygame.KMOD_CTRL:
+            self.foot_multi ^= {fid}
+        elif mods & pygame.KMOD_SHIFT and self.foot_sel is not None:
+            ids = [f["id"] for f in self.footage]
+            if self.foot_sel in ids and fid in ids:
+                a, b = sorted((ids.index(self.foot_sel), ids.index(fid)))
+                self.foot_multi = set(ids[a:b + 1])
+        else:
+            self.foot_multi = {fid}
         self.foot_sel, self.foot_click = fid, (fid, now)
+        if dbl:
+            self.add_footage_selected()                          # double-click = add to scene
+            return None
+        x0, y0 = mx, my
+
+        def drag(mx, my):
+            pass
+
+        def end():                                               # dragged onto the viewer or the timeline: added to the scene
+            mp = pygame.mouse.get_pos()
+            if math.hypot(mp[0] - x0, mp[1] - y0) > 12 and (self.r_view.collidepoint(mp) or self.r_tl.collidepoint(mp)):
+                self.add_footage_selected()
+        self.drag_end = end
+        return drag
 
     def footage_menu(self, fid, pos):
         self.foot_sel = fid
@@ -1603,7 +1662,10 @@ class AppBase:
             self.theme = d.get("theme", "Dark") if d.get("theme", "Dark") in THEMES else "Dark"
             apply_theme(self.theme)
             if d.get("palette"):
-                self.palette = [tuple(c) for c in d["palette"]]
+                self.palette = [{"c": tuple(c), "name": "", "folder": None} if isinstance(c, (list, tuple))
+                                else {"c": tuple(c["c"]), "name": c.get("name", ""), "folder": c.get("folder")} for c in d["palette"]]
+            self.pal_folders = list(d.get("pal_folders", []))
+            self.pal_view = d.get("pal_view", "circles") if d.get("pal_view") in ("circles", "tiles", "list") else "circles"
             self.labels_sync()
         except Exception:  # noqa
             pass
@@ -1612,6 +1674,7 @@ class AppBase:
         try:
             with open(os.path.join(DATA_DIR, "prefs.json"), "w", encoding="utf-8") as fh:
                 json.dump({"label_list": self.label_list, "type_label": self.type_label, "palette": self.palette,
+                           "pal_folders": self.pal_folders, "pal_view": self.pal_view,
                            "autosave": self.autosave, "theme": self.theme}, fh, indent=1)
         except OSError:
             pass
@@ -1826,26 +1889,154 @@ class AppBase:
         with open(LIBRARY_FILE, "w", encoding="utf-8") as fh:
             json.dump(self.library, fh, indent=1)
 
+    def lib_save_objs(self, objs):
+        n = 0
+        for o in objs:
+            o = o.owner or o
+            d = o.to_dict()
+            d["parent"] = None
+            d["lib_folder"] = self.lib_folder
+            self.library.append(d)
+            n += 1
+        self.save_library()
+        self.msg(f"Saved {n} object(s) in the library")
+
     def lib_save_selected(self, mx=0, my=0):
-        if not self.psel:
+        if not self.sel:
             self.msg("Select an object to save it in the library")
             return
-        d = self.psel.to_dict()
-        d["parent"] = None
-        self.library.append(d)
-        self.save_library()
-        self.msg(f"Saved {self.psel.name} in the library")
+        self.lib_save_objs(self.sel)
 
-    def lib_insert(self, i):
+    def lib_obj(self, idx):
+        d = self.library[idx]
+        o = self._lib_cache.get(id(d))
+        if o is None:
+            try:
+                o = Obj.from_dict(d)
+            except Exception:  # noqa
+                o = False
+            self._lib_cache[id(d)] = o
+        return o or None
+
+    def lib_insert(self, i, at=None):
         o = Obj.from_dict(self.library[i])
         o.name, o.node = self.unique_name(o.name), None
+        if at is not None and not o.keys["x"] and not o.keys["y"]:           # dropped in the viewer: where the mouse let go
+            o.base["x"], o.base["y"] = float(at[0]), float(at[1])
         self.objs.insert(0, o)
-        self.sel = [o]
-        self.msg(f"Inserted {o.name}")
+        return o
+
+    def lib_insert_selected(self, at=None):
+        made = [self.lib_insert(i, at) for i in sorted(self.lib_sel) if i < len(self.library) and "_folder" not in self.library[i]]
+        if made:
+            self.sel = made
+            self.msg(f"Inserted {len(made)} object(s)")
 
     def lib_delete(self, i):
         self.library.pop(i)
+        self.lib_sel = set()
+        self._lib_cache.clear()
         self.save_library()
+
+    def lib_delete_selected(self):
+        for i in sorted(self.lib_sel, reverse=True):
+            if i < len(self.library):
+                self.library.pop(i)
+        self.lib_sel = set()
+        self._lib_cache.clear()
+        self.save_library()
+
+    def lib_add_folder(self, name):
+        name = name.strip()
+        if name and not any(e.get("_folder") == name for e in self.library):
+            self.library.append({"_folder": name})
+            self.lib_folder = name
+            self.save_library()
+
+    def lib_move(self, idxs, folder):
+        for i in idxs:
+            if i < len(self.library) and "_folder" not in self.library[i]:
+                self.library[i]["lib_folder"] = folder
+        self.save_library()
+
+    def lib_folder_menu(self, f, pos):
+        def delete():
+            self.library = [e for e in self.library if e.get("_folder") != f]
+            for e in self.library:
+                if e.get("lib_folder") == f:
+                    e["lib_folder"] = None
+            if self.lib_folder == f:
+                self.lib_folder = None
+            self.save_library()
+        self.ctx = {"pos": pos, "items": [("Delete folder (objects stay in the library)", delete)]}
+
+    def lib_click(self, idx, mx, my):
+        now = pygame.time.get_ticks()
+        dbl = self._lib_click[0] == idx and now - self._lib_click[1] < 400
+        self._lib_click = (idx, now)
+        mods = pygame.key.get_mods()
+        if mods & pygame.KMOD_CTRL:
+            self.lib_sel ^= {idx}
+        elif mods & pygame.KMOD_SHIFT and self.lib_sel and idx in self._lib_visible:
+            near = min(self.lib_sel, key=lambda q: abs(q - idx))
+            if near in self._lib_visible:
+                a, b = sorted((self._lib_visible.index(near), self._lib_visible.index(idx)))
+                self.lib_sel = set(self._lib_visible[a:b + 1])
+        else:
+            self.lib_sel = {idx}
+        if dbl:
+            self.lib_insert_selected()
+            return None
+        x0, y0 = mx, my
+
+        def drag(mx, my):
+            pass
+
+        def end():                                                     # dragged out of the panel: dropped in the viewer or on the timeline
+            mp = pygame.mouse.get_pos()
+            if math.hypot(mp[0] - x0, mp[1] - y0) < 12:
+                return
+            if self.r_view.collidepoint(mp):
+                self.lib_insert_selected(self.s2a(*mp))
+            elif self.r_tl.collidepoint(mp):
+                self.lib_insert_selected()
+        self.drag_end = end
+        return drag
+
+    def lib_card_menu(self, idx, pos):
+        if idx not in self.lib_sel:
+            self.lib_sel = {idx}
+        folders = [e["_folder"] for e in self.library if "_folder" in e]
+        self.ctx = {"pos": pos, "items": [("Insert", self.lib_insert_selected)] +
+                    [(f"Move to folder: {f}", (lambda f=f: self.lib_move(list(self.lib_sel), f))) for f in folders] +
+                    [("Move out of its folder", lambda: self.lib_move(list(self.lib_sel), None)), ("Delete", self.lib_delete_selected)]}
+
+    # ---- palette
+    def pal_add_folder(self, name):
+        name = name.strip()
+        if name and name not in self.pal_folders:
+            self.pal_folders.append(name)
+            self.pal_open = name
+            self.save_prefs()
+
+    def pal_menu(self, i, pos):
+        e = self.palette[i]
+        items = [("Rename", lambda: self.begin_edit(f"palname_{i}", e["name"], lambda s, e=e: (e.update(name=s.strip()), self.save_prefs())))]
+        items += [(f"Move to folder: {f}", (lambda f=f: (e.update(folder=f), self.save_prefs()))) for f in self.pal_folders]
+        items += [("Move out of its folder", lambda: (e.update(folder=None), self.save_prefs())),
+                  ("Delete colour", lambda: (self.palette.pop(i), self.save_prefs()))]
+        self.ctx = {"pos": pos, "items": items}
+
+    def pal_folder_menu(self, f, pos):
+        def delete():
+            self.pal_folders.remove(f)
+            for e in self.palette:
+                if e["folder"] == f:
+                    e["folder"] = None
+            if self.pal_open == f:
+                self.pal_open = None
+            self.save_prefs()
+        self.ctx = {"pos": pos, "items": [("Delete folder (colours stay in the palette)", delete)]}
 
     def run_script(self, path):
         try:
@@ -2238,11 +2429,20 @@ class AppBase:
                     self.drag = r
                 return
 
+    def lib_target(self, pos):
+        return "right" not in self.hidden and self.right_tab == "Library" and self.lib_mode == "Objects" and self.r_right.collidepoint(pos)
+
     def release(self, pos, button):
+        lib_drop = self.autoscroll == "view" and bool(self.sel) and self.lib_target(pos)       # objects dragged from the viewer into the Library panel
         if self.drag_end:
             fn, self.drag_end = self.drag_end, None
             fn()
         self.drag, self.press_slot, self.autoscroll = None, None, None
+        if lib_drop:
+            for o_, b_, k_ in getattr(self, "_move_undo", []):                   # the drag only carried them there: put them back
+                o_.base.update(b_)
+                o_.keys = {p: dict(v) for p, v in k_.items()}
+            self.lib_save_objs(self.sel)
         self.schem_release(pos)
         self.flyout_release(pos)
 
