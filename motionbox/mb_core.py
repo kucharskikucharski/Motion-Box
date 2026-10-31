@@ -131,7 +131,7 @@ SLOTS = [["select", "select_level", "transform", "anchor", "animate"], None,
          ["hand", "zoom", "view_rotate"]]
 KEYMAP = {pygame.K_v: "select", pygame.K_t: "transform", pygame.K_r: "rect", pygame.K_b: "brush",
           pygame.K_e: "eraser", pygame.K_a: "animate", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_y: "anchor", pygame.K_f: "fill", pygame.K_p: "pen", pygame.K_n: "null", pygame.K_j: "bone",
-          pygame.K_h: "hand"}
+          pygame.K_h: "hand", pygame.K_i: "eyedropper"}
 WORKSPACES = ["Drawing", "Animate", "Schematic", "Fx", "Expressions", "Script"]
 MENU_NAMES = ["File", "Edit", "Object", "Type", "Effects", "View", "Tools", "Panels"]
 FORMATS = [("HD 1920 x 1080", 1920, 1080), ("4K UHD 3840 x 2160", 3840, 2160),
@@ -727,6 +727,14 @@ def draw_arrange_icon(surf, kind, r, col):
         d.line(surf, col, (cx - 9, cy - 9), (cx + 9, cy - 9), 2)
         d.rect(surf, col, (cx - 6, cy - 6, 4, 13), border_radius=2)
         d.rect(surf, col, (cx + 2, cy - 6, 4, 8), border_radius=2)
+    elif kind == "hcenter":                      # centre horizontally
+        d.line(surf, col, (cx, cy - 9), (cx, cy + 9), 2)
+        d.rect(surf, col, (cx - 8, cy - 6, 16, 4), border_radius=2)
+        d.rect(surf, col, (cx - 5, cy + 2, 10, 4), border_radius=2)
+    elif kind == "vcenter":                      # centre vertically
+        d.line(surf, col, (cx - 9, cy), (cx + 9, cy), 2)
+        d.rect(surf, col, (cx - 6, cy - 8, 4, 16), border_radius=2)
+        d.rect(surf, col, (cx + 2, cy - 5, 4, 10), border_radius=2)
     elif kind == "right":
         d.line(surf, col, (cx + 9, cy - 9), (cx + 9, cy + 9), 2)
         d.rect(surf, col, (cx - 8, cy - 6, 14, 4), border_radius=2)

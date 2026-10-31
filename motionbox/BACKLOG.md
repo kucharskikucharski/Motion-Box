@@ -177,3 +177,11 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 
 ## Nadal otwarte
 - Zaznaczanie klatek na warstwie (move / delete / cut / paste, W / Q), pozycja X i Y jako jedna wartość z opcją rozdzielenia, zaznaczanie tekstu myszą, gradient, narzędzie Text, grupy w nodeach
+
+## 30.10.2026 wieczór
+- Zrobione: "+" tworzy od razu warstwę wektorową (bez okna wyboru), wyszukiwarka warstw na timeline z filtrem typu, centrowanie w poziomie i w pionie w Align, zakładki Colors / Level Strip z własnym przewijaniem i stałym kołem barw, placeholder ikony Animate
+- Otwarte: zaznaczanie klatek na warstwie (przesuwanie / usuwanie / wycinanie / wklejanie, W / Q), szkic zakładki Color Palette do porównania (nie dotarł)
+
+## 31.10.2026
+- Zrobione: jeden przycisk "+" (Drawing / Peg / Null), listy rozwijane z zaokrąglonym trójkątem, [ ] = work area (I = eyedropper), Ctrl+0 i lista zoomu pod viewerem, ogólne oko i kłódka nad warstwami, brush: grubość i kolor linii na żywo + smoothing, onion skin z grubością rysunku i miękką plamą, lewa strzałka = wartości do animacji (dzieci składane po prawej od nazwy), opcja "Only this layer" w Select i Animate
+- Otwarte: zaznaczanie klatek na warstwie (move / delete / cut / paste, W / Q), pozycja X i Y jako jedna wartość, zaznaczanie tekstu myszą, gradient, Text

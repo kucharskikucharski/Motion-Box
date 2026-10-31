@@ -77,6 +77,9 @@ class AppBase:
         self.drop_wire, self.kf_clip, self._last_sel, self.prop_rects = None, [], (), []
         self.sel_prop, self._ws_prev, self._ft_t, self.tl_marquee, self.kf_rects = None, None, 0, None, []
         self.ph_sel, self.ph_play, self.ph_prev = set(), False, None
+        self.tl_query, self.tl_type = "", "All"
+        self.single_layer, self.brush_smooth = False, 40
+        self.pal_scroll, self.lvl_scroll, self.pal_max, self.lvl_max, self.pal_area = 0, 0, 0, 0, pygame.Rect(0, 0, 0, 0)
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -165,6 +168,76 @@ class AppBase:
             self.sel = [p]
         self.reveal_in_timeline(self.sel[0])
         self.msg("Selected " + ("children of " + lyr.name if children else "parent " + self.sel[0].name))
+
+    def set_zoom(self, z):
+        self.view_fit = False
+        r = self.r_view
+        self.zoom = z
+        self.ox, self.oy = r.centerx - self.aw / 2 * z, r.centery - self.ah / 2 * z
+
+    def toggle_all(self, flag):
+        if flag == "visible":
+            new = not any(o.visible for o in self.objs)
+            for o in self.objs:
+                o.visible = new
+            self.msg("All layers shown" if new else "All layers hidden")
+        else:
+            vis = [o for o in self.objs if o.visible]
+            new = any(not o.locked for o in vis)
+            for o in vis:
+                o.locked = new
+            self.msg("All visible layers locked" if new else "All visible layers unlocked")
+
+    def create_from_dialog(self, kind):
+        self.layer_dlg = False
+        if kind == "vlayer":
+            self.new_layer("vlayer", True)
+            return
+        o = self.new_obj(kind, self.aw // 2, self.ah // 2)
+        self.sel = [o]
+        self.begin_edit(f"rename_{id(o)}", o.name, lambda s, o=o: self.rename_obj(o, s))
+
+    def smooth_stroke(self, pts, level):
+        """Brush smoothing: the higher the level, the calmer the line (less hand jitter)."""
+        if level <= 0 or len(pts) < 3:
+            return pts
+        out = list(pts)
+        for _ in range(1 + int(level // 15)):
+            nxt = [out[0]]
+            for i in range(1, len(out) - 1):
+                nxt.append((out[i - 1][0] * 0.25 + out[i][0] * 0.5 + out[i + 1][0] * 0.25,
+                            out[i - 1][1] * 0.25 + out[i][1] * 0.5 + out[i + 1][1] * 0.25))
+            nxt.append(out[-1])
+            out = nxt
+        return out
+
+    def caret(self, cx, cy, col, s=4):
+        """The small rounded triangle that marks a drop-down list."""
+        pts = [(cx - s, cy - s // 2), (cx + s, cy - s // 2), (cx, cy + s // 2 + 2)]
+        pygame.draw.polygon(self.screen, col, pts)
+        pygame.draw.lines(self.screen, col, True, pts, 2)
+        for p in pts:
+            pygame.draw.circle(self.screen, col, p, 1)
+
+    def tl_query_eff(self):                                   # the text in the search box counts while it is being typed
+        if self.edit and self.edit.get("id") == "tl_search":
+            return self.edit["text"]
+        return self.tl_query
+
+    def tl_class(self, o):
+        if o.kind == "peg":
+            return "Pegs"
+        if o.kind == "null":
+            return "Nulls"
+        if o.kind == "bone":
+            return "Bones"
+        if self.is_controller(o):
+            return "Controllers"
+        return "Drawings"
+
+    def tl_match(self, o):
+        q = self.tl_query_eff().strip().lower()
+        return (not q or q in o.name.lower()) and (self.tl_type == "All" or self.tl_class(o) == self.tl_type)
 
     def nd_center_on(self, o):
         if o is None or not self.r_aux:
@@ -263,7 +336,7 @@ class AppBase:
         self.msg(f"{fr.name} created - move the knob")
 
     # ------------------------------------------------------------------ layers
-    def new_layer(self, kind):
+    def new_layer(self, kind, ask_name=False):
         base = "Vector Layer" if kind == "vlayer" else "Raster Layer"
         o = Obj(self.unique_name(base, numbered=True), kind, self.aw // 2, self.ah // 2, self.aw, self.ah)
         if kind == "rlayer":
@@ -271,6 +344,8 @@ class AppBase:
         self.objs.insert(0, o)
         self.sel, self.active_layer, self.layer_dlg = [o], o, False
         self.msg(f"{o.name} created - shape tools and the brush now draw into it")
+        if ask_name:                                              # the whole name is selected: just type
+            self.begin_edit(f"rename_{id(o)}", o.name, lambda s, o=o: self.rename_obj(o, s))
         return o
 
     def target_layer(self, kind):
@@ -317,7 +392,7 @@ class AppBase:
                                           ("Trim end to playhead", lambda: self.trim_to_playhead("out")),
                                           ("Cut at playhead", lambda: self.cut_layer(o.owner or o, self.frame)),
                                           ("Remove trim", lambda: self.trim_to_playhead("reset")),
-                                          ("New layer...", lambda: setattr(self, "layer_dlg", True)),
+                                          ("New layer", lambda: self.new_layer("vlayer", True)),
                                           ("Delete", self.delete_selected)] + ([("Show in footage", lambda: self.show_in_footage(o))] if o.src is not None else [])}
 
     def reset_anchor(self):
@@ -998,7 +1073,8 @@ class AppBase:
         o.phases.append(f)
         o.phases.sort()
         o._pitems[f] = []                                    # a blank drawing of its own: it does not change the other ones
-        self.sel = []
+        self.sel = [s for s in self.sel if not s.owner]       # shapes of the old drawing are gone from the screen, layers stay selected
+        self.active_layer = o
         self.msg(f"New blank drawing starts at frame {f}")
 
     def clone_items(self, o, items):
@@ -1027,7 +1103,7 @@ class AppBase:
             elif k in o.phases:
                 o.phases.remove(k)
                 o._pitems.pop(k, None)
-        self.sel = []
+        self.sel = [s for s in self.sel if not s.owner]
         self.ph_sel = set()
         self.msg("Drawing deleted")
 
@@ -2461,7 +2537,11 @@ class AppBase:
         elif self.r_aux and self.workspace == "Schematic" and self.r_aux.collidepoint(pos):
             self.nd_wheel(dy, pos)
         elif self.r_aux and self.workspace == "Drawing" and self.r_aux.collidepoint(pos):
-            self.aux_scroll = clamp(self.aux_scroll - dy * 40, 0, 420)
+            if self.drawing_tab == "Colors":                                # each tab scrolls on its own
+                if self.pal_area.collidepoint(pos):
+                    self.pal_scroll = clamp(self.pal_scroll - dy * 40, 0, self.pal_max)
+            else:
+                self.lvl_scroll = clamp(self.lvl_scroll - dy * 40, 0, self.lvl_max)
         elif self.r_view.collidepoint(pos):
             nz = clamp(self.zoom * (1.1 ** dy), 0.02, 8)
             self.ox = pos[0] - (pos[0] - self.ox) * nz / self.zoom
@@ -2589,17 +2669,19 @@ class AppBase:
             self.markers.append({"f": self.frame, "text": "", "color": [255, 188, 63]})
             self.msg(f"Marker at frame {self.frame} (double-click it to edit)")
         elif k == pygame.K_LEFTBRACKET:
-            self.brush_px = max(1, self.brush_px - (5 if mods & pygame.KMOD_SHIFT else 1))
+            if self.tool in ("brush", "eraser") and not self.r_tl.collidepoint(pos):      # brush size
+                self.brush_px = max(1, self.brush_px - (5 if mods & pygame.KMOD_SHIFT else 1))
+            else:                                                                        # work area starts at the playhead
+                self.work_in = self.frame
+                self.msg(f"Work area starts at frame {self.frame}")
         elif k == pygame.K_RIGHTBRACKET:
-            self.brush_px = min(200, self.brush_px + (5 if mods & pygame.KMOD_SHIFT else 1))
+            if self.tool in ("brush", "eraser") and not self.r_tl.collidepoint(pos):
+                self.brush_px = min(200, self.brush_px + (5 if mods & pygame.KMOD_SHIFT else 1))
+            else:                                                                        # work area ends at the playhead
+                self.work_out = self.frame
+                self.msg(f"Work area ends at frame {self.frame}")
         elif k == pygame.K_k:
             self.key_here()
-        elif k == pygame.K_i:
-            self.work_in = self.frame
-            self.msg(f"Work area starts at frame {self.frame}")
-        elif k == pygame.K_o:
-            self.work_out = self.frame
-            self.msg(f"Work area ends at frame {self.frame}")
         elif k == pygame.K_w:
             self.jump_phase(1)
         elif k == pygame.K_q:
@@ -2614,7 +2696,7 @@ class AppBase:
                 self.delete_selected()
         elif k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN):
             self.arrow_key(k, mods)
-        elif k == pygame.K_HOME:
+        elif k == pygame.K_HOME or (ctrl and k in (pygame.K_0, pygame.K_KP0)):
             self.view_fit = True
         elif ctrl and k == pygame.K_s:
             self.save_project()
@@ -2701,7 +2783,7 @@ class AppBase:
         if self.drag and self.autoscroll and self.btn == 1:        # dragging to the edge scrolls the view
             mx_, my_ = pygame.mouse.get_pos()
             if self.autoscroll == "tl":
-                top, bot = self.r_tl.y + 40, self.r_tl.bottom - 10
+                top, bot = self.r_tl.y + 100, self.r_tl.bottom - 10
                 if my_ < top + 16 or my_ > bot - 16:
                     self.tl_vy = clamp(self.tl_vy + (-12 if my_ < top + 16 else 12), 0, getattr(self, "tl_vmax", 0))
                     self.drag(mx_, my_)
@@ -2742,7 +2824,7 @@ class AppBase:
                     self.frame += 1
         kp = pygame.key.get_pressed()                         # hold [ or ] and the brush size keeps changing (faster the longer you hold)
         for key, dr in ((pygame.K_LEFTBRACKET, -1), (pygame.K_RIGHTBRACKET, 1)):
-            if kp[key] and not self.edit:
+            if kp[key] and not self.edit and self.tool in ("brush", "eraser"):
                 held = now - self.br_start.setdefault(key, now)
                 if held > 300 and now - self.br_last > 40:
                     self.brush_px = int(clamp(self.brush_px + dr * (1 + held // 500), 1, 300))

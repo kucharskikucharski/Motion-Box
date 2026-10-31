@@ -541,12 +541,15 @@ class PanelsMixin:
                 self.button((x + i * (w // 2 + 2), y, w // 2 - 2, 26), n, lambda mx, my, key=key: setattr(self, "align_to", key),
                             active=self.align_to == key, font=self.f11, hint="Align to the artboard, or to the selected objects")
             y += 32
-        gap = (w - 4 * 40) // 3
-        for i, kind in enumerate(("left", "bottom", "top", "right")):
-            rc = self.flat_button((x + i * (40 + gap), y, 40, 40), lambda mx, my, k=kind: self.align(k),
-                                  f"Align to the {kind} edge of the artboard")
+        kinds = ("left", "hcenter", "right", "top", "vcenter", "bottom")
+        bs = 34
+        gap = max(2, (w - 3 * bs) // 2)
+        to = "the selected objects" if (len(self.sel) >= 2 and self.align_to == "selection") else "the artboard"
+        for i, kind in enumerate(kinds):
+            rc = self.flat_button((x + (i % 3) * (bs + gap), y + (i // 3) * (bs + 6), bs, bs), lambda mx, my, k=kind: self.align(k),
+                                  {"hcenter": f"Centre horizontally on {to}", "vcenter": f"Centre vertically on {to}"}.get(kind, f"Align to the {kind} edge of {to}"))
             draw_arrange_icon(self.screen, kind, rc, (225, 225, 225))
-        y += 48
+        y += 2 * (bs + 6) + 6
         if not o.owner and o.kind not in ("null", "peg", "bone") and not o.kind.startswith("ctrl"):
             self.divider(x, y, w)                                # alpha matte (e.g. an eye shape that masks the pupil)
             y += 12
@@ -610,6 +613,10 @@ class PanelsMixin:
             dx = dy = 0.0
             if kind == "left":
                 dx = ref[0] - x1
+            elif kind == "hcenter":
+                dx = (ref[0] + ref[1]) / 2 - (x1 + x2) / 2
+            elif kind == "vcenter":
+                dy = (ref[2] + ref[3]) / 2 - (y1 + y2) / 2
             elif kind == "right":
                 dx = ref[1] - x2
             elif kind == "top":
@@ -624,7 +631,7 @@ class PanelsMixin:
 
     def draw_layers(self, r):
         x, y, w = r.x + 8, r.y + 40, r.w - 16
-        self.button((x, y, w, 28), "+ New Layer", lambda mx, my: setattr(self, "layer_dlg", True), radius=14,
+        self.button((x, y, w, 28), "+ New...", lambda mx, my: setattr(self, "layer_dlg", True), radius=14,
                     hint="New layer: choose vector or raster")
         y += 36
         for o in self.objs:
@@ -873,6 +880,14 @@ class PanelsMixin:
         r = self.r_trans
         self.rrect(r, (46, 46, 50), 12)
         self.txt(f"F {self.frame} / {self.total}   {self.frame / self.fps:.2f}s", r.x + 16, r.centery - 7)
+        zb = pygame.Rect(r.right - 104, r.centery - 14, 92, 28)                     # zoom: a drop-down with the scale and Fit
+        self.rrect(zb, COLOR_HOVER if self.hovering(zb) else COLOR_BTN, 14)
+        self.txt(f"{int(round(self.zoom * 100))}%", zb.x + 14, zb.centery - 7, self.f11)
+        self.caret(zb.right - 18, zb.centery, (205, 205, 205))
+        self.hit(zb, lambda mx, my: setattr(self, "ctx", {"pos": (zb.x, zb.y - 8), "items": [("Fit (Ctrl+0): the whole artboard", lambda: setattr(self, "view_fit", True))] +
+                                                           [(f"{p}%", (lambda p=p: self.set_zoom(p / 100)), None, abs(self.zoom * 100 - p) < 1) for p in (25, 50, 75, 100, 150, 200, 400)]}))
+        if self.hovering(zb):
+            self.hover_hint = "Zoom of the viewer. Fit shows the whole artboard (Ctrl+0)"
         items = [("first", lambda mx, my: self.goto(1), "Go to first frame", False),
                  ("prev", lambda mx, my: self.goto(self.frame - 1), "Previous frame (Left)", False),
                  ("stop", self.stop, "Stop and return to the first frame", False),
@@ -937,7 +952,7 @@ class PanelsMixin:
                      ("Select All", lambda: setattr(self, "sel", list(self.objs)), "Ctrl+A", None), None,
                      ("Preferences...", lambda: setattr(self, "prefs_open", True), "", None),
                      ("Keyboard Shortcuts...", lambda: self.open_info("KEYBOARD SHORTCUTS", SHORTCUTS), "", None)],
-            "Object": [("New Layer...", lambda: setattr(self, "layer_dlg", True), "", None),
+            "Object": [("New Drawing / Peg / Null...", lambda: setattr(self, "layer_dlg", True), "", None),
                        ("New Peg", lambda: self.new_obj("peg", self.aw // 2, self.ah // 2), "", None),
                        ("Reset Anchor Point", self.reset_anchor, "", None),
                        ("Generate Body Drawing Layers", self.generate_body_layers, "", None),
@@ -1130,30 +1145,36 @@ class PanelsMixin:
     def draw_layer_dlg(self):
         if not self.layer_dlg:
             return
-        box = pygame.Rect(0, 0, 440, 270)
+        box = pygame.Rect(0, 0, 468, 270)
         box.center = (self.W // 2, self.H // 2)
         self.hit((0, 0, self.W, self.H), lambda mx, my: setattr(self, "layer_dlg", False))
         self.rrect(box, (32, 34, 40), 16)
         self.rrect(box, (70, 70, 78), 16, 1)
         self.hit(box, lambda mx, my: None)
-        self.txt("New Layer", box.x + 24, box.y + 20, self.f20)
-        self.txt("What are you going to draw on it?", box.x + 24, box.y + 52, self.f12, COLOR_MUTED)
-        for i, (kind, title, d1, d2) in enumerate((("vlayer", "Vector", "Shapes and strokes", "you can edit later"),
-                                                    ("rlayer", "Raster", "Pixels: paint", "and erase"))):
-            card = pygame.Rect(box.x + 24 + i * 196, box.y + 84, 184, 120)
+        self.txt("New", box.x + 24, box.y + 20, self.f20)
+        self.txt("What do you want to create?", box.x + 24, box.y + 52, self.f12, COLOR_MUTED)
+        cards = (("vlayer", "Drawing", "A layer to draw", "shapes and strokes in"), ("peg", "Peg", "A parent that moves", "and turns its children"),
+                 ("null", "Null", "An invisible helper", "to parent things to"))
+        for i, (kind, title, d1, d2) in enumerate(cards):
+            card = pygame.Rect(box.x + 24 + i * 140, box.y + 84, 132, 120)
             self.rrect(card, COLOR_HOVER if self.hovering(card) else COLOR_BTN, 12)
             cx, cy = card.centerx, card.y + 32
+            col = (200, 200, 205)
             if kind == "vlayer":
-                self.rrect((cx - 22, cy - 14, 28, 24), (200, 200, 205), 6, 2)
-                pygame.draw.circle(self.screen, (200, 200, 205), (cx + 12, cy + 6), 11, 2)
+                self.rrect((cx - 22, cy - 14, 28, 24), col, 6, 2)
+                pygame.draw.circle(self.screen, col, (cx + 12, cy + 6), 11, 2)
+            elif kind == "peg":
+                pygame.draw.circle(self.screen, col, (cx, cy), 13, 2)
+                pygame.draw.line(self.screen, col, (cx - 18, cy), (cx + 18, cy), 2)
+                pygame.draw.line(self.screen, col, (cx, cy - 18), (cx, cy + 18), 2)
             else:
-                for gx in range(4):
-                    for gy in range(3):
-                        self.rrect((cx - 24 + gx * 13, cy - 14 + gy * 12, 9, 9), (200, 200, 205) if (gx + gy) % 2 else (90, 90, 96), 2)
+                self.rrect((cx - 14, cy - 14, 28, 28), col, 4, 2)
+                pygame.draw.line(self.screen, col, (cx - 8, cy), (cx + 8, cy), 2)
+                pygame.draw.line(self.screen, col, (cx, cy - 8), (cx, cy + 8), 2)
             self.txt(title, cx, card.y + 66, self.fb2, center=True)
             self.txt(d1, cx, card.y + 88, self.f11, COLOR_MUTED, center=True)
             self.txt(d2, cx, card.y + 104, self.f11, COLOR_MUTED, center=True)
-            self.hit(card, lambda mx, my, k=kind: self.new_layer(k))
+            self.hit(card, lambda mx, my, k=kind: self.create_from_dialog(k))
         self.button((box.right - 24 - 96, box.bottom - 24 - 28, 96, 28), "Cancel", lambda mx, my: setattr(self, "layer_dlg", False), radius=14)
 
     def draw_render_dlg(self):

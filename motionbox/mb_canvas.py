@@ -621,7 +621,7 @@ class CanvasMixin:
         items = [("auto_close", "Auto close"), ("auto_fill", "Auto fill"), ("draw_under", "Draw under")]
         hints = {"auto_close": "Close every new stroke into a shape", "auto_fill": "Close and fill every new stroke with the fill colour",
                  "draw_under": "New strokes go under the existing ones in the layer"}
-        w = sum(self.f12.size(n)[0] + 40 for _, n in items) + 112
+        w = sum(self.f12.size(n)[0] + 40 for _, n in items) + 112 + 120
         self.rrect((v.x + 8, v.y + 8, w, 32), (30, 30, 34), 12)
         cx = v.x + 20
         for k, n in items:
@@ -630,7 +630,10 @@ class CanvasMixin:
             cx += self.f12.size(n)[0] + 40
         self.txt("Size", cx, v.y + 16, self.f11, COLOR_MUTED)
         self.field((cx + 36, v.y + 12, 48, 24), self.brush_px, lambda val: setattr(self, "brush_px", int(clamp(val, 1, 200))),
-                   "brush_px", numeric=True, center=True, hint="Brush size for raster layers")
+                   "brush_px", numeric=True, center=True, hint="Brush size (also the line width)")
+        self.txt("Smooth", cx + 100, v.y + 16, self.f11, COLOR_MUTED)
+        self.field((cx + 148, v.y + 12, 48, 24), self.brush_smooth, lambda val: setattr(self, "brush_smooth", int(clamp(val, 0, 100))),
+                   "brush_smooth", numeric=True, center=True, hint="0-100: the higher, the calmer the line (less hand jitter)")
 
     def bone_anim_click(self, mx, my):
         """A bone and every drawing that follows it are ONE element. Click any of them: the bone gets the keyframe."""
@@ -670,6 +673,9 @@ class CanvasMixin:
         return o
 
     def tool_filter(self, o):
+        if self.single_layer and self.psel is not None and self.tool in ("select", "transform", "animate"):
+            if (o.owner or o) is not (self.psel.owner or self.psel):      # only the selected layer can be picked
+                return False
         if self.tool in ("bone_ik", "bone_edit"):                # the bone tools only ever touch bones
             return o.kind == "bone"
         if self.tool != "animate":
@@ -679,8 +685,18 @@ class CanvasMixin:
         f = self.animate_filter
         return (f == "peg" and isp) or (f == "ctrl" and isc) or (f == "both" and (isp or isc))
 
+    def draw_select_opts(self, v):
+        self.rrect((v.x + 8, v.y + 8, 214, 32), (30, 30, 34), 16)
+        self.layer_lock_checkbox(v.x + 20, v.y + 16)
+
+    def layer_lock_checkbox(self, x, y):
+        self.checkbox(x, y, self.single_layer, lambda mx, my: setattr(self, "single_layer", not self.single_layer),
+                      "Work only inside the selected layer: nothing else can be clicked by accident (like Photoshop's Auto-Select)")
+        self.txt("Only this layer", x + 24, y)
+
     def draw_animate_opts(self, v):
-        self.rrect((v.x + 8, v.y + 8, 300, 32), (30, 30, 34), 16)
+        self.rrect((v.x + 8, v.y + 8, 450, 32), (30, 30, 34), 16)
+        self.layer_lock_checkbox(v.x + 316, v.y + 16)
         for i, (key, n) in enumerate((("peg", "Pegs"), ("ctrl", "Controllers"), ("both", "Both"))):
             self.button((v.x + 14 + i * 96, v.y + 12, 90, 24), n, lambda mx, my, key=key: setattr(self, "animate_filter", key),
                         active=self.animate_filter == key, font=self.f11, hint="Animate tool: only these can be selected and moved")
@@ -796,6 +812,7 @@ class CanvasMixin:
             pts, self.brush_pts = self.brush_pts, None
             if len(pts) < 2:
                 return
+            pts = self.smooth_stroke(pts, self.brush_smooth)
             xs, ys = [p[0] for p in pts], [p[1] for p in pts]
             w, h = max(1.0, max(xs) - min(xs)), max(1.0, max(ys) - min(ys))
             cx, cy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
@@ -930,8 +947,14 @@ class CanvasMixin:
             self.draw_raster(o, f)
             return
         pts, closed = self.obj_pts(o, f)
-        if ghost:
-            pygame.draw.lines(self.screen, ghost, closed, pts, 1)
+        if ghost:                                                     # onion skin: the drawing's own line width, soft and translucent
+            s_ = self.world(o, f)[2]
+            gw = max(2, int(o.stroke_w * self.zoom * s_)) if o.stroke_on else 0
+            soft = (int(ghost[0] * 0.8), int(ghost[1] * 0.8), int(ghost[2] * 0.8))
+            if gw and len(pts) >= 2:
+                self.draw_alpha(pts, 55, lambda sf, p: pygame.draw.lines(sf, soft, closed, p, gw), pad=gw + 2)
+            elif len(pts) >= 3 and (closed or o.fill_on):             # a patch without a line: a calm translucent blob
+                self.draw_alpha(pts, 40, lambda sf, p: pygame.draw.polygon(sf, soft, p), pad=4)
             return
         x, y, s, rot = self.world(o, f)
         op = clamp(self.val(o, "opacity", f) / 100, 0, 1)
@@ -1044,10 +1067,10 @@ class CanvasMixin:
                 if id(o) in scope and o.visible and not o.kind.startswith("ctrl") and o.kind not in ("null", "peg"):
                     for k in range(1, self.onion["before"] + 1):
                         if self.frame - k >= 1:
-                            self.draw_tree(o, self.frame - k, shade((255, 90, 90), 1.0 - (k - 1) * 0.18))
+                            self.draw_tree(o, self.frame - k, shade((205, 95, 95), 1.0 - (k - 1) * 0.2))
                     for k in range(1, self.onion["after"] + 1):
                         if self.frame + k <= self.total:
-                            self.draw_tree(o, self.frame + k, shade((90, 220, 120), 1.0 - (k - 1) * 0.18))
+                            self.draw_tree(o, self.frame + k, shade((95, 185, 120), 1.0 - (k - 1) * 0.2))
         if self.view["safe"]:
             for k in (0.9, 0.8):
                 pygame.draw.rect(self.screen, (90, 90, 90), (ab.centerx - ab.w * k / 2, ab.centery - ab.h * k / 2,
@@ -1101,8 +1124,13 @@ class CanvasMixin:
             mp = pygame.mouse.get_pos()
             if v.collidepoint(mp):
                 pygame.draw.line(self.screen, (239, 171, 200), self.a2s(*self.bone_end(self.bone_last)), mp, 1)
-        if self.brush_pts and len(self.brush_pts) > 1:
-            pygame.draw.lines(self.screen, (235, 235, 235), False, [self.a2s(*p) for p in self.brush_pts], 3)
+        if self.brush_pts and len(self.brush_pts) > 1:                # the live line: the real width, the chosen colour, the same smoothing
+            sp = [self.a2s(*p) for p in self.smooth_stroke(self.brush_pts, self.brush_smooth)]
+            bw = max(2, int(self.brush_px * self.zoom))
+            pygame.draw.lines(self.screen, self.def_fill, False, sp, bw)
+            if bw > 3:
+                for q in (sp[0], sp[-1]):
+                    pygame.draw.circle(self.screen, self.def_fill, (int(q[0]), int(q[1])), bw // 2)
         if self.marquee:
             x1, y1, x2, y2 = self.marquee
             rc = pygame.Rect(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
@@ -1115,6 +1143,8 @@ class CanvasMixin:
             self.draw_fill_opts(v)
         elif self.tool == "animate":
             self.draw_animate_opts(v)
+        elif self.tool in ("select", "transform"):
+            self.draw_select_opts(v)
         if self.rest_layer is not None:                              # drawing view banner
             self.rrect((v.x + 8, v.y + 8, 430, 34), (30, 30, 34), 17)
             self.txt(f"Drawing view: {self.rest_layer.name} (no rig, no animation)", v.x + 20, v.y + 17, self.f11)
@@ -1608,52 +1638,106 @@ class CanvasMixin:
     def apply_palette(self, c):
         self.color_set("fill", c, 100.0)
 
+    def scrollbar(self, area, content_h, scroll):
+        if content_h <= area.h:
+            return
+        track = pygame.Rect(area.right - 9, area.y + 4, 4, area.h - 8)
+        pygame.draw.rect(self.screen, (52, 52, 58), track, border_radius=2)
+        th = max(26, int(track.h * area.h / content_h))
+        ty = track.y + int((track.h - th) * scroll / max(1, content_h - area.h))
+        pygame.draw.rect(self.screen, (125, 125, 136), (track.x, ty, 4, th), border_radius=2)
+
     def draw_levelstrip(self, r):
-        """Drawing workspace: tabs Colors (palette + a permanent colour wheel) and Level Strip."""
+        """Drawing workspace: two tabs. Colors = scrolling palette + a colour wheel that never scrolls. Level Strip = the drawings of the layer."""
         x = r.x + 24
-        top = pygame.Rect(r.x, r.y, r.w, int(r.h * 0.62))              # the colours (above) and the level strip (below) are always visible
-        bot = pygame.Rect(r.x, top.bottom, r.w, r.h - top.h)
-        for sub, fn, scroll in ((top, self.draw_colors_tab, int(self.aux_scroll)), (bot, self.draw_level_tab, 0)):
-            prev = self.push_clip(sub)
-            self.hit_clip = sub
+        for i, n in enumerate(("Colors", "Level Strip")):
+            self.button((x + i * 116, r.y + 16, 108, 28), n, lambda mx, my, n=n: setattr(self, "drawing_tab", n),
+                        active=self.drawing_tab == n, font=self.f11)
+        area = pygame.Rect(r.x, r.y + 52, r.w, r.h - 52)
+        if self.drawing_tab == "Colors":
+            wide = area.w >= 560                                       # wide panel: palette on the left, the wheel fixed on the right
+            if wide:
+                wh = pygame.Rect(area.right - 258, area.y + 8, 240, 344)
+                bar = pygame.Rect(area.x, wh.bottom - 34, area.w - 270, 34)
+                pal = pygame.Rect(area.x, area.y, area.w - 270, max(80, bar.y - area.y - 6))
+            else:                                                     # narrow panel: palette above, the wheel fixed below it
+                wh = pygame.Rect(area.centerx - 120, area.bottom - 352, 240, 344)
+                bar = pygame.Rect(area.x, wh.y - 40, area.w, 34)
+                pal = pygame.Rect(area.x, area.y, area.w, max(80, bar.y - area.y - 6))
+            self.pal_area = pal
+            prev = self.push_clip(pal)
+            self.hit_clip = pal
             try:
-                fn(sub, x, sub.y + 16 - scroll)
+                ed_ = self.edit.get("id", "") if self.edit else ""
+                if ed_ == "palfolder" or ed_.startswith("palname_"):
+                    self.pal_scroll = 0
+                y0 = pal.y + 12 - int(self.pal_scroll)
+                end = self.draw_colors_tab(pal, x, y0)
             finally:
                 self.hit_clip = None
                 self.pop_clip(prev)
-        pygame.draw.line(self.screen, COLOR_LINE, (r.x + 16, top.bottom), (r.right - 16, top.bottom))
+            content = end - y0 + 24
+            self.pal_max = max(0, content - pal.h)
+            self.pal_scroll = clamp(self.pal_scroll, 0, self.pal_max)
+            self.scrollbar(pal, content, self.pal_scroll)
+            if pal.collidepoint(pygame.mouse.get_pos()):               # the frame shows that this list scrolls on its own
+                pygame.draw.rect(self.screen, COLOR_ACCENT_L, pal.inflate(-8, -2), 1, border_radius=6)
+            self.draw_palette_bar(bar)
+            prev = self.push_clip(wh.inflate(8, 8).clip(area))
+            dp = self.dock_picker                                      # the wheel is bound to the fill colour
+            rgb, a = self.color_get("fill")
+            if tuple(hsv_to_rgb(dp["h"], dp["s"], dp["v"])) != tuple(rgb) and not self.drag:
+                h, s_, v = rgb_to_hsv(rgb)
+                if s_ > 0.001 and v > 0.001:
+                    dp["h"] = h
+                dp["s"], dp["v"], dp["a"] = s_, v, a
+            self.picker_body(dp, wh)
+            self.pop_clip(prev)
+        else:
+            prev = self.push_clip(area)
+            self.hit_clip = area
+            try:
+                y0 = area.y + 12 - int(self.lvl_scroll)
+                end = self.draw_level_tab(area, x, y0)
+            finally:
+                self.hit_clip = None
+                self.pop_clip(prev)
+            content = (end or y0) - y0 + 24
+            self.lvl_max = max(0, content - area.h)
+            self.lvl_scroll = clamp(self.lvl_scroll, 0, self.lvl_max)
+            self.scrollbar(area, content, self.lvl_scroll)
 
-    def draw_colors_tab(self, r, x, y):
-        self.txt("PALETTE", x, y, self.fb2)
-        bx = r.right - 24 - 3 * 30                                    # three views: circles, rounded tiles with names, list
+    def draw_palette_bar(self, bar):
+        """Fixed strip under the palette: + Folder on the left, the three views (circles / rounded tiles / list) on the right."""
+        self.button((bar.x + 24, bar.y + 3, 84, 28), "+ Folder", lambda mx, my: (setattr(self, "pal_scroll", 0), self.begin_edit("palfolder", "", self.pal_add_folder)),
+                    radius=14, font=self.f11, hint="New folder, e.g. one for every character")
+        bx = bar.right - 24 - 3 * 36
         for k, (mode, hint) in enumerate((("circles", "Circles"), ("tiles", "Rounded tiles with the names"), ("list", "List"))):
-            rc = pygame.Rect(bx + k * 30, y - 4, 26, 26)
+            rc = pygame.Rect(bx + k * 36, bar.y + 1, 32, 32)
             self.flat_button(rc, lambda mx, my, m=mode: (setattr(self, "pal_view", m), self.save_prefs()), hint, self.pal_view == mode)
             cx, cy = rc.center
             if mode == "circles":
-                pygame.draw.circle(self.screen, (225, 225, 225), (cx, cy), 6, 2)
+                pygame.draw.circle(self.screen, (235, 235, 235), (cx, cy), 7, 2)
             elif mode == "tiles":
-                pygame.draw.rect(self.screen, (225, 225, 225), (cx - 8, cy - 5, 16, 10), 2, border_radius=4)
+                pygame.draw.rect(self.screen, (235, 235, 235), (cx - 9, cy - 6, 18, 12), 2, border_radius=5)
             else:
-                for dy in (-5, 0, 5):
-                    pygame.draw.line(self.screen, (225, 225, 225), (cx - 7, cy + dy), (cx + 7, cy + dy), 2)
-        y += 30
+                for dy in (-6, 0, 6):
+                    pygame.draw.line(self.screen, (235, 235, 235), (cx - 8, cy + dy), (cx + 8, cy + dy), 2)
+
+    def draw_colors_tab(self, r, x, y):
         W = r.w - 48
-        cx0 = x                                                       # folders
-        for name, val in [("All", None)] + [(f, f) for f in self.pal_folders] + [("+ Folder", "__new__")]:
-            tw = self.f11.size(name)[0] + 20
-            if cx0 + tw > x + W:
-                cx0, y = x, y + 28
-            rc = pygame.Rect(cx0, y, tw, 24)
-            if val == "__new__":
-                self.button(rc, name, lambda mx, my: self.begin_edit("palfolder", "", self.pal_add_folder), radius=12, font=self.f11,
-                            hint="New folder, e.g. one for every character")
-            else:
+        if self.pal_folders:                                          # the folder chips appear once there is a folder
+            cx0 = x
+            for name, val in [("All", None)] + [(f, f) for f in self.pal_folders]:
+                tw = self.f11.size(name)[0] + 20
+                if cx0 + tw > x + W:
+                    cx0, y = x, y + 28
+                rc = pygame.Rect(cx0, y, tw, 24)
                 self.button(rc, name, lambda mx, my, v=val: setattr(self, "pal_open", v), active=self.pal_open == val, radius=12, font=self.f11)
                 if val is not None:
                     self.hit(rc, lambda mx, my, v=val: self.pal_folder_menu(v, (mx, my)), (3,))
-            cx0 += tw + 6
-        y += 32
+                cx0 += tw + 6
+            y += 32
         ed_id = self.edit.get("id", "") if self.edit else ""
         if ed_id == "palfolder" or ed_id.startswith("palname_"):       # typing a folder name or a colour name
             self.txt("Folder name:" if ed_id == "palfolder" else "Colour name:", x, y + 6, self.f11, COLOR_MUTED)
@@ -1712,29 +1796,22 @@ class CanvasMixin:
             y += (len(vis) // max(1, (W + 6) // 90) + 1) * 34 + 12
         else:
             y += (len(vis) + 1) * 30 + 12
-        dp = self.dock_picker                                  # the colour wheel stays visible here, bound to the fill colour
-        rgb, a = self.color_get("fill")
-        if tuple(hsv_to_rgb(dp["h"], dp["s"], dp["v"])) != tuple(rgb) and not self.drag:
-            h, s_, v = rgb_to_hsv(rgb)
-            if s_ > 0.001 and v > 0.001:
-                dp["h"] = h
-            dp["s"], dp["v"], dp["a"] = s_, v, a
-        self.picker_body(dp, pygame.Rect(r.centerx - 120, y, 240, 344))
+        return y
 
     def draw_level_tab(self, r, x, y):
         o = self.psel
-        lyr = (o.owner or o) if o else None
+        lyr = (o.owner or o) if o else (self.active_layer if self.active_layer in self.objs else None)
         self.txt("LEVEL STRIP", x, y, self.fb2)
         y += 30
         if not lyr or lyr.kind not in ("vlayer", "rlayer"):
             self.txt("Select a drawing layer to see its drawings.", x, y, self.f12, COLOR_MUTED)
-            return
+            return y + 30
         self.txt(lyr.name, x, y, self.fb)
         y += 24
         w = r.w - 2 * (x - r.x)
         if lyr.kind == "rlayer":
             self.txt("Raster layers keep one drawing for now.", x, y, self.f11, COLOR_MUTED)
-            return
+            return y + 30
         keys = ([0] if (not lyr.phases or lyr.phases[0] > 1) else []) + sorted(lyr.phases)
         cur = lyr.phase_key(self.frame)
         # ---- big preview with a small play button: plays the drawings one after another
@@ -1784,6 +1861,7 @@ class CanvasMixin:
             self.hit(card, lambda mx, my, k=k, lyr=lyr: setattr(self, "ctx", {"pos": (mx, my), "items": [
                 ("Go to this drawing", lambda: self.goto(max(1, k))), ("Duplicate", lambda: self.phase_duplicate(lyr, k)),
                 ("Delete", lambda: self.phase_delete(lyr, [k]))]}), (3,))
+        return y + ((len(keys) - 1) // per + 1) * 82 + 8
 
     def level_click(self, lyr, k, keys, mx, my):
         mods = pygame.key.get_mods()

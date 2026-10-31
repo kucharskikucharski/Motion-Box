@@ -18,6 +18,13 @@ class TimelineMixin:
     def tl_rows(self):
         """A tree: every layer is followed by the layers parented to it (a drawing under its peg, a peg under its bone ...)."""
         rows, seen, done = [], set(), set()
+        if self.tl_query_eff().strip() or self.tl_type != "All":             # searching: just the layers that match, one under the other
+            for o in self.objs:
+                if self.tl_match(o):
+                    rows.append(("o", o, None))
+                    if o.expanded:
+                        rows.extend(("p", o, p) for p in PROPS if (o.u_props is None or p in o.u_props) and (not o.u_mode or o.keys[p] or p in o.expr))
+            return rows
 
         def walk(o):
             if id(o) in done:
@@ -314,7 +321,7 @@ class TimelineMixin:
         self.rrect(tl, COLOR_TL, 8)
         cx0 = tl.x + 8 + LCW + 8
         area_w = max(48, tl.right - 24 - cx0)
-        y0 = tl.y + 32
+        y0 = tl.y + 88                                                  # a search row and an "all layers" row sit above the layer names
         reg = pygame.Rect(tl.x + 8, y0, tl.w - 24, max(8, tl.bottom - 8 - y0))
         rows = self.tl_rows()
         self.prop_rects, self.kf_rects = [], []
@@ -356,13 +363,50 @@ class TimelineMixin:
         for a, b in (((-4, -4), (4, 4)), ((-4, 4), (4, -4))):
             pygame.draw.line(self.screen, (170, 170, 170), (xr.centerx + a[0], xr.centery + a[1]), (xr.centerx + b[0], xr.centery + b[1]), 2)
         self.hit(xr, lambda mx, my: self.toggle_dock("timeline"))
-        plus = pygame.Rect(tl.x + 140, tl.y + 4, 24, 24)               # + = new vector / raster layer
-        self.flat_button(plus, lambda mx, my: setattr(self, "layer_dlg", True), "New layer: choose vector or raster")
+        plus = pygame.Rect(tl.x + 100, tl.y + 4, 24, 24)               # + = new vector / raster layer
+        self.flat_button(plus, lambda mx, my: setattr(self, "layer_dlg", True), "New drawing, peg or null")
         pygame.draw.line(self.screen, (225, 225, 225), (plus.centerx - 6, plus.centery), (plus.centerx + 6, plus.centery), 2)
         pygame.draw.line(self.screen, (225, 225, 225), (plus.centerx, plus.centery - 6), (plus.centerx, plus.centery + 6), 2)
-        for i_, (lab_, kind_) in enumerate((("+ Peg", "peg"), ("+ Null", "null"))):        # peg / null straight from the timeline
-            self.button((tl.x + 172 + i_ * 62, tl.y + 4, 58, 24), lab_, lambda mx, my, kind_=kind_: self.new_obj(kind_, self.aw // 2, self.ah // 2),
-                        radius=8, font=self.f11, hint="New " + kind_)
+        # ---- search: find layers by name, optionally only one kind of layer
+        sy = tl.y + 32
+        fr_ = pygame.Rect(tl.x + 16, sy + 1, 150, 24)
+        self.field(fr_, self.tl_query, lambda s: setattr(self, "tl_query", s.strip()), "tl_search",
+                   hint="Type the first letters of a layer name - only the matching layers stay in the list")
+        q_ = self.tl_query_eff()
+        if not q_:
+            ic_ = pygame.Rect(fr_.x + 6, fr_.y + 3, 18, 18)
+            pygame.draw.circle(self.screen, (120, 120, 126), (ic_.x + 7, ic_.y + 7), 5, 2)
+            pygame.draw.line(self.screen, (120, 120, 126), (ic_.x + 11, ic_.y + 11), (ic_.x + 15, ic_.y + 15), 2)
+            if not (self.edit and self.edit.get("id") == "tl_search"):
+                self.txt("Search layers", fr_.x + 28, fr_.y + 5, self.f11, (120, 120, 126))
+        else:
+            n_ = sum(1 for o in self.objs if self.tl_match(o))
+            self.txt(f"{n_} found", fr_.right - 30, fr_.y + 5, self.f11, COLOR_MUTED, right=True)
+            xr_ = pygame.Rect(fr_.right - 24, fr_.y + 2, 20, 20)
+            for a_, b_ in (((-3, -3), (3, 3)), ((-3, 3), (3, -3))):
+                pygame.draw.line(self.screen, (190, 190, 190), (xr_.centerx + a_[0], xr_.centery + a_[1]), (xr_.centerx + b_[0], xr_.centery + b_[1]), 2)
+            self.hit(xr_, lambda mx, my: (setattr(self, "tl_query", ""), setattr(self, "edit", None)))
+            if self.hovering(xr_):
+                self.hover_hint = "Clear the search"
+        tb_ = pygame.Rect(tl.x + 170, sy + 1, 72, 24)
+        self.caret(tb_.right - 14, tb_.centery, (205, 205, 205))
+        self.button(tb_, {"Controllers": "Ctrl", "Drawings": "Draw"}.get(self.tl_type, self.tl_type), lambda mx, my: setattr(self, "ctx", {"pos": (mx, my), "items": [
+            (n, (lambda n=n: setattr(self, "tl_type", n)), None, self.tl_type == n) for n in ("All", "Drawings", "Pegs", "Nulls", "Bones", "Controllers")]}),
+            radius=8, font=self.f11, hint="Show only one kind of layer (works together with the search)")
+        gy = tl.y + 60                                                  # eye and lock for ALL layers, right above the columns of the rows
+        any_vis = any(o.visible for o in self.objs)
+        all_locked = bool(self.objs) and all(o.locked for o in self.objs if o.visible) and any_vis
+        gev, glk = pygame.Rect(tl.x + 36, gy + 2, 20, 20), pygame.Rect(tl.x + 60, gy + 2, 20, 20)
+        self.eye_icon(gev.centerx, gev.centery, (235, 235, 235) if any_vis else (90, 90, 90))
+        self.lock_icon(glk.centerx, glk.centery, (235, 235, 235) if all_locked else (90, 90, 90), all_locked)
+        self.txt("All layers", tl.x + 108, gy + 5, self.f11, COLOR_MUTED)
+        if self.hovering(gev):
+            self.hover_hint = "Show / hide ALL layers at once"
+        if self.hovering(glk):
+            self.hover_hint = "Lock / unlock all visible layers at once"
+        self.hit(gev, lambda mx, my: self.toggle_all("visible"))
+        self.hit(glk, lambda mx, my: self.toggle_all("locked"))
+        pygame.draw.line(self.screen, (40, 41, 46), (tl.x + 12, gy + 26), (tl.x + LCW, gy + 26))
         pc = self.push_clip(cells)
         step = 1 if cw >= 28 else (5 if cw >= 9 else 10)
         for f in range(f0, f1 + 1):
@@ -429,12 +473,11 @@ class TimelineMixin:
                 self.row_rects.append((lab, o))
                 self.hit(lab, lambda mx, my, o=o: self.layer_press(o, my, y0))
                 self.hit(lab, lambda mx, my, o=o: self.layer_menu(o, (mx, my)), (3,))
-                if any(c.parent is o and not self.is_controller(c) for c in self.objs):
-                    ch = pygame.Rect(tl.x + 12, y + 2, 20, 20)             # only a layer with children can be unfolded
-                    draw_icon(self.screen, "tri_r" if o.collapsed else "tri_d", ch, (200, 200, 200))
-                    if self.hovering(ch):
-                        self.hover_hint = "Show / hide the layers parented to this one"
-                    self.hit(ch, lambda mx, my, o=o: setattr(o, "collapsed", not o.collapsed))
+                ch = pygame.Rect(tl.x + 12, y + 2, 20, 20)
+                draw_icon(self.screen, "tri_d" if o.expanded else "tri_r", ch, (200, 200, 200))
+                if self.hovering(ch):
+                    self.hover_hint = "Show the values that can be animated: position, rotation, scale, opacity (U = only animated ones)"
+                self.hit(ch, lambda mx, my, o=o: setattr(o, "expanded", not o.expanded))
                 ey = pygame.Rect(tl.x + 36, y + 2, 20, 20)
                 self.eye_icon(ey.centerx, ey.centery, (220, 220, 220) if o.visible else (80, 80, 80))
                 if self.hovering(ey):
@@ -461,11 +504,11 @@ class TimelineMixin:
                     self.txt("a", tl.x + LCW - 16, y + 4, self.fb, COLOR_TEAL)
                     if self.hovering(pygame.Rect(tl.x + LCW - 22, y, 20, RH)):
                         self.hover_hint = "Alpha matte of: " + ", ".join(x.name for x in self.objs if x.matte == o.name)
-                if False:                                           # (the fold icon moved to the arrow on the left)
+                if any(c.parent is o and not self.is_controller(c) for c in self.objs):        # children: folded / unfolded here, right of the name
                     gr = pygame.Rect(tl.x + LCW - 40, y + 2, 20, 20)
                     draw_icon(self.screen, "tri_r" if o.collapsed else "tri_d", gr, (200, 200, 205))
                     if self.hovering(gr):
-                        self.hover_hint = "Fold / unfold the children of this group"
+                        self.hover_hint = "Show / hide the layers parented to this one"
                     self.hit(gr, lambda mx, my, o=o: setattr(o, "collapsed", not o.collapsed))
                 self.pop_clip(pcl)
             else:
