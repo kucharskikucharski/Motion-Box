@@ -132,7 +132,7 @@ class PanelsMixin:
             return (o.fill, o.fill_a) if field == "fill" else (o.stroke, o.stroke_a)
         return (self.def_fill if field == "fill" else self.def_stroke), 100.0
 
-    def color_set(self, field, rgb, alpha):
+    def color_set(self, field, rgb, alpha, apply=False):
         rgb = tuple(rgb)
         if field == "cap":
             for o in self.sel:
@@ -150,19 +150,19 @@ class PanelsMixin:
             self.def_fill = rgb
         else:
             self.def_stroke = rgb
-        for o in self.sel:
+        for o in (self.sel if apply else []):                  # the swatches in the toolbox / palette only choose the next colour; the Fill Bucket (or Properties) paints
             if field == "fill":
                 o.fill, o.fill_a, o.fill_on = rgb, alpha, True
             else:
                 o.stroke, o.stroke_a, o.stroke_on = rgb, alpha, True
 
-    def open_picker(self, field, anchor):
+    def open_picker(self, field, anchor, apply=False):
         rgb, a = self.color_get(field)
         h, s, v = rgb_to_hsv(rgb)
         box = pygame.Rect(anchor[0], anchor[1], 240, 344)
         box.x = clamp(box.x, 8, self.W - 248)
         box.y = clamp(box.y, 8, self.H - 352)
-        self.picker = {"field": field, "h": h, "s": s, "v": v, "a": a, "rect": box, "sv_h": None}
+        self.picker = {"field": field, "h": h, "s": s, "v": v, "a": a, "rect": box, "sv_h": None, "apply": apply}
         if not hasattr(self, "_hue_bar"):
             t = pygame.Surface((7, 1))
             for i, c in enumerate([(255, 0, 0), (255, 255, 0), (0, 255, 0), (0, 255, 255), (0, 0, 255),
@@ -175,7 +175,7 @@ class PanelsMixin:
 
     def picker_apply(self, p=None):
         p = p or self.picker
-        self.color_set(p["field"], hsv_to_rgb(p["h"], p["s"], p["v"]), p["a"])
+        self.color_set(p["field"], hsv_to_rgb(p["h"], p["s"], p["v"]), p["a"], p.get("apply", False))
 
     def picker_set_rgb(self, rgb, p=None):
         p = p or self.picker
@@ -440,11 +440,11 @@ class PanelsMixin:
         sw = pygame.Rect(x, y, 32, 32)
         self.rrect(sw, rgb, 8)
         self.rrect(sw, (200, 200, 200), 8, 1)
-        self.hit(sw, lambda mx, my: self.open_picker(field, (self.r_right.x - 248, y)))
+        self.hit(sw, lambda mx, my: self.open_picker(field, (self.r_right.x - 248, y), True))
         self.field((x + 40, y, w - 40 - 64, 32), rgb_to_hex(rgb),
-                   lambda s, f=field, a=a: self.color_set(f, hex_to_rgb(s) or rgb, a), f"hex_{field}",
+                   lambda s, f=field, a=a: self.color_set(f, hex_to_rgb(s) or rgb, a, True), f"hex_{field}",
                    hint="Hex colour")
-        self.field((x + w - 56, y, 40, 32), f"{a:.0f}", lambda v, f=field, rgb=rgb: self.color_set(f, rgb, clamp(v, 0, 100)),
+        self.field((x + w - 56, y, 40, 32), f"{a:.0f}", lambda v, f=field, rgb=rgb: self.color_set(f, rgb, clamp(v, 0, 100), True),
                    f"op_{field}", numeric=True, center=True, hint="Opacity %")
         self.txt("%", x + w - 12, y + 9, self.f11, COLOR_MUTED)
         y += 40

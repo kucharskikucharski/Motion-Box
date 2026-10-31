@@ -131,7 +131,7 @@ SLOTS = [["select", "select_level", "transform", "anchor", "animate"], None,
          ["hand", "zoom", "view_rotate"]]
 KEYMAP = {pygame.K_v: "select", pygame.K_t: "transform", pygame.K_r: "rect", pygame.K_b: "brush",
           pygame.K_e: "eraser", pygame.K_a: "animate", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_y: "anchor", pygame.K_f: "fill", pygame.K_p: "pen", pygame.K_n: "null", pygame.K_j: "bone",
-          pygame.K_h: "hand", pygame.K_i: "eyedropper"}
+          pygame.K_h: "hand", pygame.K_i: "eyedropper", pygame.K_o: "ellipse"}
 WORKSPACES = ["Drawing", "Animate", "Schematic", "Fx", "Expressions", "Script"]
 MENU_NAMES = ["File", "Edit", "Object", "Type", "Effects", "View", "Tools", "Panels"]
 FORMATS = [("HD 1920 x 1080", 1920, 1080), ("4K UHD 3840 x 2160", 3840, 2160),
@@ -575,7 +575,9 @@ class Obj:
         self.u_mode, self.node_open, self.u_props = False, False, None
         self.src = None           # footage id this layer was made from (image / sequence / solid)
         self.anchor = (0.0, 0.0)  # pivot, relative to the shape centre; the object's position is the anchor point
-        self._pitems = {0: []}    # vector layer: the shapes of every drawing (phase): {0: first drawing, frame: drawing starting there}
+        self._pitems = {0: []}    # vector layer: the bank of drawings {id: shapes}; drawing 0 always exists (one blank drawing at least)
+        self.dorder = [0]         # the order of the drawings in the Level Strip
+        self.pmap = {}            # frame where a drawing starts to be shown -> drawing id (the markers are in self.phases)
         self.owner = None         # the vector layer this shape belongs to
         self.surf, self.png = None, None      # raster layer pixels / saved png (assets/...)
         self.ik = None            # two-bone IK: {role, other, target, flip}
@@ -613,9 +615,27 @@ class Obj:
 
     CUR = [1]                  # the frame the program shows right now
 
-    def phase_key(self, f):
+    def phase_key(self, f):                                   # which drawing is on screen at frame f
         ks = [p for p in self.phases if p <= f]
-        return max(ks) if ks else 0
+        return self.pmap.get(max(ks), 0) if ks else 0
+
+    def new_drawing(self, items=None, after=None):
+        did = max(self._pitems) + 1
+        self._pitems[did] = items if items is not None else []
+        if after in self.dorder:
+            self.dorder.insert(self.dorder.index(after) + 1, did)
+        else:
+            self.dorder.append(did)
+        return did
+
+    def expose(self, f, did):                                 # from frame f on, drawing `did` is shown (until the next marker)
+        if f not in self.phases:
+            self.phases.append(f)
+            self.phases.sort()
+        self.pmap[f] = did
+
+    def exposed_at(self, did):
+        return sorted(f for f in self.phases if self.pmap.get(f, 0) == did)
 
     @property
     def items(self):           # the shapes of the drawing that is active at the current frame
@@ -642,8 +662,10 @@ class Obj:
 
     def to_dict(self):
         d = {k: getattr(self, k) for k in FIELDS}
-        d["items"] = [it.to_dict() for it in self._pitems.get(0, [])]
-        d["phase_items"] = {str(k): [it.to_dict() for it in v] for k, v in self._pitems.items() if k != 0}
+        d["items"] = [it.to_dict() for it in self._pitems.get(0, [])]          # (the first drawing, for older readers)
+        d["drawings"] = {str(k): [it.to_dict() for it in v] for k, v in self._pitems.items()}
+        d["dorder"] = list(self.dorder)
+        d["pmap"] = {str(k): v for k, v in self.pmap.items()}
         d["keys"] = {p: {str(f): v for f, v in self.keys[p].items()} for p in PROPS}
         d["ease"] = {str(f): list(e) for f, e in self.ease.items()}
         d["phase_pts"] = {str(f): p for f, p in self.phase_pts.items()}
@@ -662,12 +684,23 @@ class Obj:
         o.limit = tuple(o.limit) if o.limit else None
         o.anchor = tuple(o.anchor)
         o.caption_color = tuple(o.caption_color) if o.caption_color else None
-        o._pitems = {0: [Obj.from_dict(x) for x in d.get("items", [])]}
-        for k, v in d.get("phase_items", {}).items():
-            o._pitems[int(k)] = [Obj.from_dict(x) for x in v]
-        for ph in o.phases:                                  # old projects: every phase starts as a copy of the first drawing
-            if ph not in o._pitems:
-                o._pitems[ph] = [Obj.from_dict(x) for x in d.get("items", [])]
+        if "drawings" in d:
+            o._pitems = {int(k): [Obj.from_dict(x) for x in v] for k, v in d["drawings"].items()}
+            o._pitems.setdefault(0, [])
+            o.dorder = [int(i) for i in d.get("dorder", sorted(o._pitems))]
+            for i in sorted(o._pitems):
+                if i >= 0 and i not in o.dorder:
+                    o.dorder.append(i)
+            o.pmap = {int(k): int(v) for k, v in d.get("pmap", {}).items()}
+        else:                                                    # older projects: a drawing per phase, every one starts as it was
+            o._pitems = {0: [Obj.from_dict(x) for x in d.get("items", [])]}
+            o.dorder, o.pmap = [0], {}
+            old = d.get("phase_items", {})
+            for n, ph in enumerate(sorted(o.phases), 1):
+                src = old.get(str(ph))
+                o._pitems[n] = [Obj.from_dict(x) for x in (src if src is not None else d.get("items", []))]
+                o.pmap[ph] = n
+                o.dorder.append(n)
         for lst in o._pitems.values():
             for it in lst:
                 it.parent = it.owner = o
