@@ -733,6 +733,8 @@ class CanvasMixin:
         items = []
         if o and (o.owner or o).kind == "vlayer":
             items.append(("Edit drawing without the rig", lambda: self.enter_rest_edit(o)))
+        if self.sel and any(s.kind not in ("bone", "vlayer", "rlayer") for s in self.sel):
+            items += [("Flip horizontally  (mirror left-right)", lambda: self.flip_selected("x")), ("Flip vertically  (mirror top-bottom)", lambda: self.flip_selected("y"))]
         if self.sel:
             items += [("Cut  (Ctrl+X)", self.cut_sel), ("Copy  (Ctrl+C)", self.copy_sel)]
         items.append(("Paste  (Ctrl+V)", lambda: self.paste((mx, my))))
@@ -1433,7 +1435,7 @@ class CanvasMixin:
         for o in self.objs:
             o.node_open = on
 
-    def node_thumb(self, o, rc, frame=None):
+    def node_thumb(self, o, rc, frame=None, drawing=None):
         fr = frame or self.frame
         self.rrect(rc, (22, 22, 24), 6)
         if o.kind == "rlayer" and o.surf is not None:
@@ -1450,7 +1452,7 @@ class CanvasMixin:
                 self.screen.blit(sm, sm.get_rect(center=rc.center))
             return
         polys = []
-        for it in (reversed(o.items_at(fr)) if o.kind == "vlayer" else [o]):
+        for it in (reversed(o._pitems.get(drawing, []) if drawing is not None else o.items_at(fr)) if o.kind == "vlayer" else [o]):
             pts, closed = shape_pts(it, fr)
             if o.kind == "vlayer":
                 b = it.base
@@ -1711,6 +1713,10 @@ class CanvasMixin:
         """Fixed strip under the palette: + Folder on the left, the three views (circles / rounded tiles / list) on the right."""
         self.button((bar.x + 24, bar.y + 3, 84, 28), "+ Folder", lambda mx, my: (setattr(self, "pal_scroll", 0), self.begin_edit("palfolder", "", self.pal_add_folder)),
                     radius=14, font=self.f11, hint="New folder, e.g. one for every character")
+        hx = "#%02X%02X%02X" % tuple(int(v) for v in self.def_fill)
+        hb = pygame.Rect(bar.x + 116, bar.y + 5, 84, 24)                           # the hex code of the current colour, small, bottom of the panel
+        self.rrect(hb, (34, 34, 38), 12)
+        self.txt(hx, hb.centerx, hb.centery - 1, self.f11, COLOR_MUTED, center=True)
         bx = bar.right - 24 - 3 * 36
         for k, (mode, hint) in enumerate((("circles", "Circles"), ("tiles", "Rounded tiles with the names"), ("list", "List"))):
             rc = pygame.Rect(bx + k * 36, bar.y + 1, 32, 32)
@@ -1761,7 +1767,7 @@ class CanvasMixin:
                 c = e["c"]
                 lum = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]
                 tc = (20, 20, 20) if lum > 140 else (245, 245, 245)
-                label = e["name"] or "#%02X%02X%02X" % tuple(int(v) for v in c)
+                label = e["name"] or f"Color {i + 1}"
                 if view == "circles":
                     self.rrect(rc, c, 14)
                     if tuple(c) == tuple(self.def_fill):
@@ -1778,11 +1784,10 @@ class CanvasMixin:
                     sw = pygame.Rect(rc.x + 4, rc.y + 3, 20, 20)
                     self.rrect(sw, c, 10)
                     self.txt(label, rc.x + 32, rc.y + 5, self.f11)
-                    self.txt("#%02X%02X%02X" % tuple(int(v) for v in c), rc.right - 8, rc.y + 5, self.f11, COLOR_MUTED, right=True)
-                self.hit(rc, lambda mx, my, c=c: self.apply_palette(c))
+                self.hit(rc, lambda mx, my, i=i, c=c: self.pal_click(i, c))
                 self.hit(rc, lambda mx, my, i=i: self.pal_menu(i, (mx, my)), (3,))
                 if self.hovering(rc):
-                    self.hover_hint = (e["name"] + "  " if e["name"] else "") + "Click: use the colour / right-click: rename, move to a folder, delete"
+                    self.hover_hint = label + "  #%02X%02X%02X" % tuple(int(v) for v in c) + "  - click: use it / double-click: rename / right-click: more"
             else:
                 add_rc = rc
                 self.rrect(rc, (48, 48, 48), 14 if view == "circles" else 10)
@@ -1798,11 +1803,18 @@ class CanvasMixin:
             y += (len(vis) + 1) * 30 + 12
         return y
 
+    def rounded_tri(self, pts, col):
+        pygame.draw.polygon(self.screen, col, pts)
+        pygame.draw.lines(self.screen, col, True, pts, 2)
+        for p in pts:
+            pygame.draw.circle(self.screen, col, p, 1)
+
     def draw_level_tab(self, r, x, y):
         o = self.psel
         lyr = (o.owner or o) if o else (self.active_layer if self.active_layer in self.objs else None)
         self.txt("LEVEL STRIP", x, y, self.fb2)
         y += 30
+        self.ph_tiles = []
         if not lyr or lyr.kind not in ("vlayer", "rlayer"):
             self.txt("Select a drawing layer to see its drawings.", x, y, self.f12, COLOR_MUTED)
             return y + 30
@@ -1812,83 +1824,137 @@ class CanvasMixin:
         if lyr.kind == "rlayer":
             self.txt("Raster layers keep one drawing for now.", x, y, self.f11, COLOR_MUTED)
             return y + 30
-        keys = ([0] if (not lyr.phases or lyr.phases[0] > 1) else []) + sorted(lyr.phases)
+        ids = lyr.dorder
         cur = lyr.phase_key(self.frame)
-        # ---- big preview with a small play button: plays the drawings one after another
-        pv = pygame.Rect(x, y, w, 112)
-        now = pygame.time.get_ticks()
-        shown = self.ph_prev if (self.ph_prev in keys) else cur
-        if self.ph_play and keys:
-            shown = keys[(now // 140) % len(keys)]
-        self.node_thumb(lyr, pv, max(1, shown))
+        pv = pygame.Rect(x, y, w, 112)                                   # big preview; the little play button plays all drawings in turn
+        shown = self.ph_prev if self.ph_prev in ids else cur
+        if self.ph_play and ids:
+            shown = ids[(pygame.time.get_ticks() // 140) % len(ids)]
+        self.node_thumb(lyr, pv, drawing=shown)
         pb = pygame.Rect(pv.right - 28, pv.bottom - 28, 22, 22)
-        self.rrect(pb, (0, 0, 0, 150) if False else (20, 20, 24), 11)
+        self.rrect(pb, (20, 20, 24), 11)
         if self.ph_play:
-            pygame.draw.rect(self.screen, (235, 235, 235), (pb.x + 6, pb.y + 6, 4, 10))
-            pygame.draw.rect(self.screen, (235, 235, 235), (pb.x + 12, pb.y + 6, 4, 10))
+            pygame.draw.rect(self.screen, (235, 235, 235), (pb.x + 6, pb.y + 6, 4, 10), border_radius=1)
+            pygame.draw.rect(self.screen, (235, 235, 235), (pb.x + 12, pb.y + 6, 4, 10), border_radius=1)
         else:
-            pygame.draw.polygon(self.screen, (235, 235, 235), [(pb.x + 7, pb.y + 5), (pb.x + 7, pb.y + 17), (pb.x + 17, pb.y + 11)])
+            self.rounded_tri([(pb.x + 8, pb.y + 6), (pb.x + 8, pb.y + 16), (pb.x + 16, pb.y + 11)], (235, 235, 235))
         self.hit(pb, lambda mx, my: setattr(self, "ph_play", not self.ph_play))
         y += 122
-        # ---- buttons
         bw = (w - 8) // 3
         self.button((x, y, bw, 30), "+ New", lambda mx, my: self.add_phase(lyr), color=COLOR_ACCENT_L, radius=15, font=self.f11,
-                    hint="A blank drawing starts at the playhead - the other drawings stay as they are")
+                    hint="A blank drawing next to the active one, shown from the playhead")
         self.button((x + bw + 4, y, bw, 30), "Duplicate", lambda mx, my: self.phase_duplicate(lyr, cur), radius=15, font=self.f11,
-                    hint="Copy the active drawing into a new one right after the playhead")
+                    hint="Copy the active drawing")
         self.button((x + 2 * (bw + 4), y, bw, 30), "Delete", lambda mx, my: self.phase_delete(lyr, list(self.ph_sel) or [cur]), radius=15, font=self.f11,
-                    hint="Delete the selected drawings")
-        y += 40
-        self.checkbox(x, y + 2, self.auto_phase, lambda mx, my: setattr(self, "auto_phase", not self.auto_phase), "Auto-create a drawing for every new brush stroke")
+                    hint="Delete the selected drawings (the layer stays, it always keeps one drawing)")
+        y += 38
+        self.checkbox(x, y + 2, self.auto_phase, lambda mx, my: setattr(self, "auto_phase", not self.auto_phase),
+                      "Auto-create: drawing on a frame that does not start a drawing makes a NEW drawing there instead of drawing over the old one")
         self.txt("Auto-create", x + 24, y + 3, self.f11)
-        y += 28
-        self.txt("Drawings  (click = go to, Shift / Ctrl = several, drag onto the timeline = place)", x, y, self.f11, COLOR_MUTED)
+        for k_, (mode, lab) in enumerate((("grid", "Grid"), ("list", "List"))):
+            self.button((x + w - 108 + k_ * 54, y - 2, 50, 26), lab, lambda mx, my, m=mode: setattr(self, "ph_view", m), active=self.ph_view == mode,
+                        radius=13, font=self.f11, hint="Small thumbnails in a grid, or big ones one under another")
+        y += 30
+        self.txt("Click = show, Shift / Ctrl = several, drag = reorder or drop on the timeline", x, y, self.f11, COLOR_MUTED)
         y += 22
-        per = max(1, int((w + 8) // 72))
-        for i, k in enumerate(keys):
-            cx, cy = x + (i % per) * 72, y + (i // per) * 82
-            card = pygame.Rect(cx, cy, 64, 74)
-            sel = k in self.ph_sel
-            self.rrect(card, COLOR_ACCENT if k == cur else COLOR_BTN, 8)
+        per = max(1, int((w + 8) // 72)) if self.ph_view == "grid" else 1
+        for n, did in enumerate(ids):
+            if self.ph_view == "grid":
+                card = pygame.Rect(x + (n % per) * 72, y + (n // per) * 82, 64, 74)
+            else:
+                card = pygame.Rect(x, y + n * 100, w, 92)
+            sel = did in self.ph_sel
+            self.rrect(card, COLOR_ACCENT if did == cur else COLOR_BTN, 8)
             if sel:
                 self.rrect(card, (255, 255, 255), 8, 2)
-            th = pygame.Rect(cx + 6, cy + 6, 52, 40)
-            self.node_thumb(lyr, th, max(1, k))
-            self.txt(f"F {max(1, k)}", cx + 32, cy + 58, self.f11, center=True)
+            ex = lyr.exposed_at(did)
+            if self.ph_view == "grid":
+                self.node_thumb(lyr, pygame.Rect(card.x + 6, card.y + 6, 52, 40), drawing=did)
+                self.txt(f"#{n + 1}" + (f"  F{ex[0]}" if ex else ""), card.centerx, card.y + 58, self.f11, center=True)
+            else:
+                self.node_thumb(lyr, pygame.Rect(card.x + 6, card.y + 6, 120, 80), drawing=did)
+                self.txt(f"Drawing {n + 1}", card.x + 136, card.y + 20, self.fb)
+                self.txt("shown from frame " + ", ".join(str(f) for f in ex[:4]) if ex else "not on the timeline", card.x + 136, card.y + 44, self.f11, COLOR_MUTED)
+            self.ph_tiles.append((card, did))
             if self.hovering(card):
-                self.ph_prev = k
-            self.hit(card, lambda mx, my, k=k, keys=keys, lyr=lyr: self.level_click(lyr, k, keys, mx, my))
-            self.hit(card, lambda mx, my, k=k, lyr=lyr: setattr(self, "ctx", {"pos": (mx, my), "items": [
-                ("Go to this drawing", lambda: self.goto(max(1, k))), ("Duplicate", lambda: self.phase_duplicate(lyr, k)),
-                ("Delete", lambda: self.phase_delete(lyr, [k]))]}), (3,))
-        return y + ((len(keys) - 1) // per + 1) * 82 + 8
+                self.ph_prev = did
+            self.hit(card, lambda mx, my, did=did, lyr=lyr: self.level_click(lyr, did, mx, my))
+            self.hit(card, lambda mx, my, did=did, lyr=lyr: setattr(self, "ctx", {"pos": (mx, my), "items": [
+                ("Show from the playhead", lambda: self.place_drawing(lyr, self.frame, did)), ("Duplicate", lambda: self.phase_duplicate(lyr, did)),
+                ("Delete", lambda: self.phase_delete(lyr, [did]))]}), (3,))
+        if self.ph_drop:                                                  # where the dragged drawings will land
+            pygame.draw.rect(self.screen, (255, 255, 255), self.ph_drop[1], border_radius=2)
+        per_rows = (len(ids) - 1) // per + 1
+        return y + per_rows * (82 if self.ph_view == "grid" else 100) + 8
 
-    def level_click(self, lyr, k, keys, mx, my):
+    def level_click(self, lyr, did, mx, my):
         mods = pygame.key.get_mods()
-        if mods & pygame.KMOD_SHIFT and self.ph_sel:                 # a range
-            last = max(self.ph_sel, key=lambda q: abs(q - k)) if self.ph_sel else k
-            a, b = sorted((keys.index(last) if last in keys else 0, keys.index(k)))
-            self.ph_sel = set(keys[a:b + 1])
-        elif mods & pygame.KMOD_CTRL:
-            self.ph_sel ^= {k}
+        if mods & pygame.KMOD_CTRL:
+            self.ph_sel ^= {did}
+        elif mods & pygame.KMOD_SHIFT and self.ph_sel:                   # a range in the order of the strip
+            near = min(self.ph_sel, key=lambda q: abs(lyr.dorder.index(q) - lyr.dorder.index(did)) if q in lyr.dorder else 999)
+            a, b = sorted((lyr.dorder.index(near), lyr.dorder.index(did)))
+            self.ph_sel = set(lyr.dorder[a:b + 1])
         else:
-            self.ph_sel = {k}
-        self.goto(max(1, k))
+            self.ph_sel = {did}
+        self.ph_prev = did
+        ex = lyr.exposed_at(did)
+        if ex and lyr.phase_key(self.frame) != did:                       # jump to where it is shown
+            self.goto(ex[0])
         x0, y0 = mx, my
+        self.ph_ghost = (lyr, did)
 
         def drag(mx, my):
-            pass
+            self.ph_drop = None
+            if math.hypot(mx - x0, my - y0) < 8 or not self.ph_tiles:
+                return
+            for rc, i in self.ph_tiles:                                     # an insertion line next to the tile under the mouse
+                if rc.collidepoint(mx, my):
+                    idx = lyr.dorder.index(i)
+                    if self.ph_view == "grid":
+                        after = mx >= rc.centerx
+                        self.ph_drop = (idx + (1 if after else 0), pygame.Rect(rc.right + 1 if after else rc.x - 4, rc.y, 3, rc.h))
+                    else:
+                        after = my >= rc.centery
+                        self.ph_drop = (idx + (1 if after else 0), pygame.Rect(rc.x, rc.bottom + 1 if after else rc.y - 4, rc.w, 3))
+                    return
 
-        def end():                                                      # dropped on the timeline: the drawing is placed at that frame
+        def end():
             mp = pygame.mouse.get_pos()
-            if self.r_tl.collidepoint(mp) and math.hypot(mp[0] - x0, mp[1] - y0) > 12 and getattr(self, "tl_frame_at", None):
+            drop, self.ph_drop, self.ph_ghost = self.ph_drop, None, None
+            if math.hypot(mp[0] - x0, mp[1] - y0) < 12:
+                return
+            ids = [i for i in lyr.dorder if i in (self.ph_sel or {did})]
+            if drop and self.r_aux.collidepoint(mp):                       # dropped between drawings: reorder
+                self.phase_reorder(lyr, set(ids), drop[0])
+            elif self.r_tl.collidepoint(mp) and getattr(self, "tl_frame_at", None):   # dropped on the timeline: only the frames it lands on change
+                rows_ = self.tl_rows()
+                ri = int((mp[1] - (self.r_tl.y + 88) + self.tl_vy) // 24)
+                T = rows_[ri][1] if 0 <= ri < len(rows_) and rows_[ri][1].kind == "vlayer" and rows_[ri][0] == "o" else lyr
                 f = self.tl_frame_at(mp[0])
-                for q in sorted(self.ph_sel or {k}):
-                    self.phase_set(lyr, int(clamp(f, 1, self.total)), self.clone_items(lyr, lyr._pitems.get(q, [])))
-                    f += 1
-                self.msg(f"Drawing placed on the timeline at frame {f - len(self.ph_sel or {k})}")
+                mine = sorted(fr for lid, fr in self.fr_sel if lid == id(T))
+                if mine and f in mine:                                    # onto selected frames: they all get the drawing(s)
+                    for k, fr in enumerate(mine):
+                        self.expose_range(T, fr, fr, ids[min(k, len(ids) - 1)] if T is lyr else ids[0])
+                else:
+                    for k, i in enumerate(ids):
+                        self.expose_range(T, f + k, f + k, i if T is lyr else ids[0])
+                self.msg(f"{len(ids)} drawing(s) put on the timeline - nothing new was created")
         self.drag_end = end
         return drag
+
+    def draw_ghosts(self):
+        g = self.ph_ghost
+        if not g or not self.drag:
+            return
+        lyr, did = g
+        mx, my = pygame.mouse.get_pos()
+        ids = [i for i in lyr.dorder if i in (self.ph_sel or {did})][:3]
+        for n, i in reversed(list(enumerate(ids))):                        # the dragged thumbnails follow the mouse
+            rc = pygame.Rect(mx - 30 + n * 8, my - 24 + n * 8, 60, 48)
+            self.rrect(rc, (34, 34, 40), 6)
+            self.node_thumb(lyr, rc, drawing=i)
+            self.rrect(rc, (255, 255, 255), 6, 2)
 
     def draw_fx(self, r):
         x, y = r.x + 16, r.y + 16

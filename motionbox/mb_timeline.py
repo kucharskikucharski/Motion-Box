@@ -121,7 +121,7 @@ class TimelineMixin:
         i0, e0 = o.t_in, o.t_out or self.total
         keys0 = {p: dict(o.keys[p]) for p in PROPS}
         ease0, ph0, tout0 = dict(o.ease), list(o.phases), o.t_out
-        pit0 = dict(o._pitems)
+        pm0 = dict(o.pmap)
         last = [0]
 
         def drag(mx, my):
@@ -134,8 +134,7 @@ class TimelineMixin:
             o.keys = {p: {max(1, f + d): v for f, v in keys0[p].items()} for p in PROPS}      # keyframes travel with the layer
             o.ease = {max(1, f + d): e for f, e in ease0.items()}
             o.phases = [max(1, f + d) for f in ph0]
-            o._pitems = {0: pit0.get(0, [])}                  # every drawing travels with its phase
-            o._pitems.update({max(1, f + d): pit0[f] for f in ph0 if f in pit0})
+            o.pmap = {max(1, f + d): pm0[f] for f in ph0 if f in pm0}             # the markers travel with the layer, the drawings stay in the Level Strip
         return drag
 
     def marker_click(self, m):
@@ -212,6 +211,44 @@ class TimelineMixin:
         else:
             o.expr[p] = "value"
             self.begin_edit(f"tlexpr_{o.name}_{p}", "value", lambda s, o=o, p=p: self.set_expr(o, p, s))
+
+    def fr_press(self, ri, mx, my, y0, frame_at):
+        """A press on the grid in Frames mode: on a selected frame it drags the selection, elsewhere it draws a selection rectangle."""
+        rows = self.tl_rows()
+        f0 = frame_at(mx)
+        o0 = rows[ri][1] if ri < len(rows) else None
+        shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+        if pygame.key.get_mods() & pygame.KMOD_ALT and o0 is not None:                  # Alt + drag: move the whole layer in time
+            return self.layer_time_drag(o0, mx, frame_at)
+        self.goto(f0)                                                                   # like Tahoma: the click also puts the playhead there
+        if o0 is not None and (id(o0), f0) in self.fr_sel and not shift:        # drag the selected frames
+            moved = [0]
+
+            def move(mx, my):
+                moved[0] = frame_at(mx) - f0
+
+            def end_move():
+                self.fr_move(moved[0])
+            self.drag_end = end_move
+            return move
+        base = set(self.fr_sel) if shift else set()
+        self.fr_sel = set(base)
+
+        def sel(mx, my):
+            f1 = frame_at(mx)
+            r1 = int(clamp((my - y0 + self.tl_vy) // RH, 0, len(rows) - 1))
+            a, b = sorted((f0, f1))
+            ra, rb = sorted((ri, r1))
+            new = set(base)
+            for k in range(ra, rb + 1):
+                kind_, ob, _ = rows[k]
+                if kind_ == "o" and ob.kind == "vlayer":
+                    for f in range(a, b + 1):
+                        if ob.t_in <= f <= (ob.t_out or self.total):
+                            new.add((id(ob), f))
+            self.fr_sel = new
+        sel(mx, my)
+        return sel
 
     def trim_drag(self, o, is_in, frame_at):
         def start(mx, my):
@@ -325,9 +362,15 @@ class TimelineMixin:
         reg = pygame.Rect(tl.x + 8, y0, tl.w - 24, max(8, tl.bottom - 8 - y0))
         rows = self.tl_rows()
         self.prop_rects, self.kf_rects = [], []
+        fsel = {}
+        for lid_, f_ in self.fr_sel:
+            fsel.setdefault(lid_, set()).add(f_)
         self.tl_vmax = max(0, len(rows) * RH - reg.h)
         self.tl_vy = clamp(self.tl_vy, 0, self.tl_vmax)
-        cw = max(4.0, area_w / (self.total + EXTRA)) * self.tl_zoom
+        base_ = max(4.0, area_w / (self.total + EXTRA))
+        if not getattr(self, "_tl_zoom_init", False):                  # the default view: frame numbers every 5, grid visible
+            self.tl_zoom, self._tl_zoom_init = max(1.0, 14.0 / base_), True
+        cw = base_ * self.tl_zoom
         self.tl_cw, self.tl_area, self.tl_cx0 = cw, area_w, cx0
         self.tl_max = max(0.0, cw * (self.total + EXTRA) - area_w)
         if self.playing:                                    # keep the playhead in view while playing
@@ -399,7 +442,10 @@ class TimelineMixin:
         gev, glk = pygame.Rect(tl.x + 36, gy + 2, 20, 20), pygame.Rect(tl.x + 60, gy + 2, 20, 20)
         self.eye_icon(gev.centerx, gev.centery, (235, 235, 235) if any_vis else (90, 90, 90))
         self.lock_icon(glk.centerx, glk.centery, (235, 235, 235) if all_locked else (90, 90, 90), all_locked)
-        self.txt("All layers", tl.x + 108, gy + 5, self.f11, COLOR_MUTED)
+        self.txt("All layers", tl.x + 100, gy + 5, self.f11, COLOR_MUTED)
+        self.button((tl.x + 172, gy + 1, 66, 24), "Frames", lambda mx, my: (setattr(self, "frame_mode", not self.frame_mode), setattr(self, "fr_sel", set())),
+                    active=self.frame_mode, radius=12, font=self.f11,
+                    hint="Frames: click or drag on the grid to select frames (the playhead follows). Drag the selection to move it, Del empties it, Ctrl+C / X / V, Q / W swap the drawing. Alt + drag moves the whole layer. Switch off to drag layers without Alt")
         if self.hovering(gev):
             self.hover_hint = "Show / hide ALL layers at once"
         if self.hovering(glk):
@@ -499,7 +545,9 @@ class TimelineMixin:
                 if self.edit and self.edit.get("id") == rid:
                     self.field((tl.x + 128, y + 1, LCW - 124, RH - 4), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
                 else:
-                    self.txt(o.name, tl.x + 132 + 12 * min(self.obj_depth(o), 5), y + 5)
+                    nx_ = tl.x + 132 + 12 * min(self.obj_depth(o), 5)
+                    kids_ = any(c.parent is o and not self.is_controller(c) for c in self.objs)
+                    self.txt(self.fit_text(o.name, self.f12, max(24, tl.x + LCW - (46 if kids_ else 26) - nx_)), nx_, y + 5)          # too long: ends with ...  and never runs into the fold arrow
                 if o.name in used_mattes:                          # this layer is the alpha of another layer
                     self.txt("a", tl.x + LCW - 16, y + 4, self.fb, COLOR_TEAL)
                     if self.hovering(pygame.Rect(tl.x + LCW - 22, y, 20, RH)):
@@ -555,10 +603,10 @@ class TimelineMixin:
                         lo2, hi2 = min(d.t_in for d in ds), max((d.t_out or self.total) for d in ds)
                         pygame.draw.rect(self.screen, mix(lc, (255, 255, 255), 0.55), (fx(lo2), y + RH - 7, (hi2 - lo2 + 1) * cw - 1, 3))
                         pygame.draw.line(self.screen, (255, 255, 255), (fx(hi2) + cw - 1, y + RH - 10), (fx(hi2) + cw - 1, y + RH - 3), 2)
-                for ph_f in o.phases:                      # a new drawing starts here: a light divider and a small light dot
+                for ph_f in (o.phases if cw >= 8 else []):  # a new drawing starts here: a black line and a black dot (hidden when zoomed far out)
                     px = fx(ph_f)
-                    pygame.draw.line(self.screen, mix(lc, (255, 255, 255), 0.6), (px, y + 3), (px, y + RH - 5), 2)
-                    pygame.draw.circle(self.screen, mix(lc, (255, 255, 255), 0.9), (int(px + cw / 2 + 1), y + 12), 3)
+                    pygame.draw.line(self.screen, (14, 14, 16), (px, y + 3), (px, y + RH - 5), 2)
+                    pygame.draw.circle(self.screen, (0, 0, 0), (int(px + cw / 2 + 1), y + 12), 3)
                 for a, b in zip(kf, kf[1:]):
                     xa, xb = fx(a) + cw / 2, fx(b) + cw / 2
                     pygame.draw.line(self.screen, (235, 235, 240), (xa, y + 12), (xb, y + 12))
@@ -579,6 +627,12 @@ class TimelineMixin:
                 rdiamond(self.screen, ctr, sz, COLOR_YELLOW if selk else ((255, 255, 255) if kind == "o" else (200, 200, 210)), True)
                 rowk.append((pygame.Rect(int(ctr[0]) - 7, y + 5, 14, 14).clip(cells), item))
                 self.kf_rects.append(rowk[-1])
+            if kind == "o" and id(o) in fsel:                  # selected frames light up
+                for f_ in fsel[id(o)]:
+                    if f0 <= f_ <= f1:
+                        fr_rc = pygame.Rect(int(fx(f_)), y + 1, max(2, int(cw) - 1), RH - 4)
+                        self.draw_alpha([fr_rc.topleft, fr_rc.topright, fr_rc.bottomright, fr_rc.bottomleft], 38, lambda sf, p: pygame.draw.polygon(sf, (255, 255, 255), p))
+                        pygame.draw.rect(self.screen, (255, 255, 255), fr_rc, 2, border_radius=3)
             self.pop_clip(pc)
             row = pygame.Rect(cx0, y, area_w, RH - 2).clip(reg)
             self.row_rects.append((row, o))
@@ -643,6 +697,8 @@ class TimelineMixin:
                             ox_, ix_ = xa + clamp(e[0] * L, 10, L / 2 - 2), xb - clamp(e[1] * L, 10, L / 2 - 2)
                             self.hit(pygame.Rect(int(ox_) - 6, y + 4, 12, 16).clip(cells), self.ease_drag(o, a, 0, xa, xb))
                             self.hit(pygame.Rect(int(ix_) - 6, y + 4, 12, 16).clip(cells), self.ease_drag(o, a, 1, xa, xb))
+            if self.frame_mode and kind == "o":              # Frames: the grid selects frames; keyframes and trim handles still sit on top of it
+                self.hit(pygame.Rect(cx0, y, area_w, RH - 2).clip(reg), lambda mx, my, ri=i: self.fr_press(ri, mx, my, y0, self.tl_frame_at))
             for rc, item in rowk:                           # keyframes sit on top of the bar ...
                 self.hit(rc, lambda mx, my, item=item: self.kf_press(item, mx))
                 self.hit(rc, lambda mx, my, item=item: self.kf_menu(item, (mx, my)), (3,))
@@ -723,7 +779,7 @@ class TimelineMixin:
         if mods & pygame.KMOD_ALT:                              # Alt + scroll = zoom around the cursor
             old = max(1.0, self.tl_cw)
             fpos = (pos[0] - getattr(self, "tl_cx0", 0) + self.tl_off) / old
-            self.tl_zoom = clamp(self.tl_zoom * (1.15 ** (dy or dx)), 1.0, 8.0)
+            self.tl_zoom = clamp(self.tl_zoom * (1.15 ** (dy or dx)), 6.0 / max(4.0, self.tl_area / (self.total + EXTRA)), 14.0)      # zooming out stops where it is still readable
             new = max(4.0, self.tl_area / (self.total + EXTRA)) * self.tl_zoom
             self.tl_off = max(0.0, fpos * new - (pos[0] - getattr(self, "tl_cx0", 0)))
         elif dx or (mods & pygame.KMOD_SHIFT):                  # Shift + scroll / sideways scroll = along time

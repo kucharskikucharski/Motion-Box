@@ -79,6 +79,8 @@ class AppBase:
         self.ph_sel, self.ph_play, self.ph_prev = set(), False, None
         self.tl_query, self.tl_type = "", "All"
         self.single_layer, self.brush_smooth = False, 40
+        self.ph_view, self.ph_tiles, self.ph_drop, self.ph_ghost, self._pal_click = "grid", [], None, None, (None, 0)
+        self.frame_mode, self.fr_sel, self.fr_clip = True, set(), None
         self.pal_scroll, self.lvl_scroll, self.pal_max, self.lvl_max, self.pal_area = 0, 0, 0, 0, pygame.Rect(0, 0, 0, 0)
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
@@ -168,6 +170,39 @@ class AppBase:
             self.sel = [p]
         self.reveal_in_timeline(self.sel[0])
         self.msg("Selected " + ("children of " + lyr.name if children else "parent " + self.sel[0].name))
+
+    def flip_selected(self, axis):
+        """Mirror the selected shapes around the middle of the selection: axis x = left-right, y = top-bottom."""
+        objs = [s for s in self.sel if not s.locked and s.kind != "bone" and not s.kind.startswith("ctrl") and s.kind not in ("vlayer", "rlayer", "image")]
+        if not objs:
+            self.msg("Select the shapes inside a drawing layer to flip them")
+            return
+        pts = [self.s2a(*p) for o in objs for p in self.box_pts(o, 0)]
+        cx, cy = (min(p[0] for p in pts) + max(p[0] for p in pts)) / 2, (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2
+        self.push_undo()
+        for o in objs:
+            x, y, s, rot = self.world(o, self.frame)
+            pr = self.world(o.parent, self.frame)[3] if o.parent else 0.0
+            if o.kind in ("brush", "line") and o.pts:                   # strokes: the points are mirrored in their own frame
+                o.pts = [(-px, py) for px, py in o.pts]
+            if axis == "x":
+                nx, ny, nrot = 2 * cx - x, y, -rot
+            else:
+                nx, ny, nrot = x, 2 * cy - y, 180 - rot
+            self.set_world_pos(o, nx, ny)
+            if "rotation" not in self.locked_props(o):
+                o.set_value("rotation", self.frame, round(nrot - pr, 1))
+        self.msg(("Flipped left-right" if axis == "x" else "Flipped top-bottom") + f": {len(objs)} object(s)")
+
+    def pal_click(self, i, c):
+        now = pygame.time.get_ticks()
+        if self._pal_click[0] == i and now - self._pal_click[1] < 400:       # double-click: type the colour's own name
+            e = self.palette[i]
+            self.begin_edit(f"palname_{i}", e["name"] or f"Color {i + 1}", lambda s, e=e: (e.update(name=s.strip()), self.save_prefs()))
+            self._pal_click = (None, 0)
+            return
+        self._pal_click = (i, now)
+        self.apply_palette(c)
 
     def set_zoom(self, z):
         self.view_fit = False
@@ -326,6 +361,7 @@ class AppBase:
         h = 200 if "y" in mode else 40
         fr = Obj(self.unique_name(name), "rsquare" if mode == "xy" else "pill", x, y, w, h)
         fr.fill, fr.stroke, fr.stroke_on = (40, 40, 46), (110, 110, 125), True
+        fr.fill_on, fr.stroke_w = False, 3                        # sliders and joysticks: see-through, a slightly thicker outline
         kn = Obj(self.unique_name(fr.name + " Knob"), "ellipse", 0, 0, 36, 36)
         kn.fill, kn.parent = (61, 121, 230), fr
         lx = (w - 36) / 2 if "x" in mode else 0        # the knob never leaves the frame
@@ -357,6 +393,10 @@ class AppBase:
     def new_item(self, kind, x, y, w=1, h=1):
         """A shape inside the active vector layer (one is created when there is none)."""
         layer = self.target_layer("vlayer") or self.new_layer("vlayer")
+        if layer.kind == "vlayer" and layer.phase_key(self.frame) == -1:            # a blank frame: drawing there makes a drawing of its own
+            self.add_phase(layer)
+        elif self.auto_phase and layer.items and self.frame not in layer.phases:      # Auto-create: a new drawing from this frame, not on top of the old one
+            self.add_phase(layer)
         o = self.new_obj(kind, x, y, w=w, h=h, insert=False)
         o.parent = o.owner = layer
         self.put_base(o, x, y)
@@ -1061,21 +1101,147 @@ class AppBase:
             self.goto(min(c) if d > 0 else max(c))
 
     def add_phase(self, o=None):
+        """A new blank drawing starts at the playhead (it joins the Level Strip next to the active one)."""
         o = o or self.psel
-        o = (o.owner or o) if o else None
-        if not o or o.kind not in ("vlayer", "rlayer"):                 # phases belong to a drawing layer
-            self.msg("Phases live inside a drawing layer - select a vector / raster layer")
+        o = (o.owner or o) if o else (self.active_layer if self.active_layer in self.objs else None)
+        if not o or o.kind != "vlayer":
+            self.msg("Drawings live inside a drawing layer - select one")
             return
         f = self.frame
-        if f in o.phases:
-            self.msg(f"Frame {f} already starts a drawing")
-            return
-        o.phases.append(f)
-        o.phases.sort()
-        o._pitems[f] = []                                    # a blank drawing of its own: it does not change the other ones
+        did = o.new_drawing(after=o.phase_key(f))
+        o.expose(f, did)
         self.sel = [s for s in self.sel if not s.owner]       # shapes of the old drawing are gone from the screen, layers stay selected
         self.active_layer = o
-        self.msg(f"New blank drawing starts at frame {f}")
+        self.ph_sel = {did}
+        self.msg(f"New blank drawing from frame {f}")
+
+    # ---- frames of a layer: select, move, delete, cut / copy / paste, change the drawing (Q / W)
+    def fr_runs(self):
+        by = {}
+        for lid, f in self.fr_sel:
+            by.setdefault(lid, []).append(f)
+        res = []
+        for o in self.objs:
+            fs = sorted(by.get(id(o), []))
+            if not fs or o.kind != "vlayer":
+                continue
+            runs, a, b = [], fs[0], fs[0]
+            for f in fs[1:]:
+                if f == b + 1:
+                    b = f
+                else:
+                    runs.append((a, b))
+                    a = b = f
+            runs.append((a, b))
+            res.append((o, runs))
+        return res
+
+    def expose_range(self, L, a, b, did):
+        """Frames a..b show drawing `did` (-1 = nothing); everything around keeps what it showed."""
+        a, b = int(max(1, a)), int(min(self.total, b))
+        if b < a:
+            return
+        before = L.phase_key(a - 1) if a > 1 else None
+        after = L.phase_key(b + 1) if b < self.total else None
+        for f in [f for f in L.phases if a <= f <= b]:
+            L.phases.remove(f)
+            L.pmap.pop(f, None)
+        if before is None or before != did:
+            L.expose(a, did)
+        if after is not None and after != did and (b + 1) not in L.phases:
+            L.expose(b + 1, after)
+
+    def fr_delete(self):
+        n = 0
+        for L, runs in self.fr_runs():
+            for a, b in runs:
+                self.expose_range(L, a, b, -1)
+                n += b - a + 1
+        self.sel = [s for s in self.sel if not s.owner]
+        self.msg(f"{n} frame(s) emptied - the drawings stay in the Level Strip" if n else "Select frames first")
+
+    def fr_copy(self, cut=False):
+        runs = self.fr_runs()
+        if not runs:
+            return
+        f0 = min(a for _, rs in runs for a, _ in rs)
+        self.fr_clip = [(L, [(f - f0, L.phase_key(f)) for a, b in rs for f in range(a, b + 1)]) for L, rs in runs]
+        n = sum(len(seq) for _, seq in self.fr_clip)
+        if cut:
+            self.fr_delete()
+        self.msg(f"{'Cut' if cut else 'Copied'} {n} frame(s) - Ctrl+V pastes them at the playhead")
+
+    def fr_paste(self):
+        if not self.fr_clip:
+            return
+        targets = [o for o in self.sel if o.kind == "vlayer" and not o.owner]
+        new = set()
+        for src, seq in self.fr_clip:
+            for T in (targets if (len(self.fr_clip) == 1 and targets) else [src]):
+                cache = {}
+                for rel, did in seq:
+                    d = did
+                    if T is not src and did >= 0:                       # another layer: the drawings are copied into it
+                        if did not in cache:
+                            cache[did] = T.new_drawing(self.clone_items(T, src._pitems.get(did, [])))
+                        d = cache[did]
+                    f = int(clamp(self.frame + rel, 1, self.total))
+                    self.expose_range(T, f, f, d)
+                    new.add((id(T), f))
+        self.fr_sel = new
+        self.sel = [s for s in self.sel if not s.owner]
+        self.msg(f"Pasted {len(new)} frame(s) at frame {self.frame}")
+
+    def fr_shift(self, step):
+        n = 0
+        for L, runs in self.fr_runs():
+            order = L.dorder
+            for a, b in runs:
+                cur = L.phase_key(a)
+                j = (order.index(cur) if cur in order else (0 if step > 0 else len(order))) + step
+                if 0 <= j < len(order):
+                    self.expose_range(L, a, b, order[j])
+                    n += b - a + 1
+        self.sel = [s for s in self.sel if not s.owner]
+        self.msg(f"{n} frame(s) now show the {'next' if step > 0 else 'previous'} drawing" if n else "There is no further drawing in that direction")
+
+    def substitute(self, step):
+        """Q / W: swap the drawing shown at the playhead (or in the selected frames) for the previous / next one from the Level Strip.
+        It never creates a drawing: it only picks from the ones that exist."""
+        if self.fr_sel:
+            self.fr_shift(step)
+            return
+        targets = [o for o in self.sel if o.kind == "vlayer" and not o.owner]
+        if not targets and self.psel is not None and (self.psel.owner or self.psel).kind == "vlayer":
+            targets = [self.psel.owner or self.psel]
+        if not targets and self.active_layer in self.objs and self.active_layer.kind == "vlayer":
+            targets = [self.active_layer]
+        n = 0
+        for L in targets:
+            order = L.dorder
+            if len(order) < 2:
+                continue
+            cur = L.phase_key(self.frame)
+            j = (order.index(cur) + step) % len(order) if cur in order else (0 if step > 0 else len(order) - 1)
+            self.expose_range(L, self.frame, self.frame, order[j])
+            n += 1
+        self.sel = [s for s in self.sel if not s.owner]
+        self.msg(f"Frame {self.frame}: drawing substituted ({'forward' if step > 0 else 'backward'})" if n else "This layer has only one drawing - draw another one first")
+
+    def fr_move(self, d):
+        if not d:
+            return
+        new = set()
+        for L, runs in self.fr_runs():
+            pairs = [(f, L.phase_key(f)) for a, b in runs for f in range(a, b + 1)]
+            for f, _ in pairs:
+                self.expose_range(L, f, f, -1)
+            for f, did in pairs:
+                g = int(clamp(f + d, 1, self.total))
+                self.expose_range(L, g, g, did)
+                new.add((id(L), g))
+        self.fr_sel = new
+        self.sel = [s for s in self.sel if not s.owner]
 
     def clone_items(self, o, items):
         out = [Obj.from_dict(it.to_dict()) for it in items]
@@ -1083,29 +1249,39 @@ class AppBase:
             it.parent = it.owner = o
         return out
 
-    def phase_set(self, o, f, items):
-        if f not in o.phases and f > 1 or (f == 1 and f not in o.phases):
-            o.phases.append(f)
-            o.phases.sort()
-        o._pitems[f] = items
+    def place_drawing(self, o, f, did):                      # show an existing drawing from frame f on
+        o.expose(int(clamp(f, 1, self.total)), did)
 
-    def phase_duplicate(self, o, key):
-        f = self.frame if self.frame not in o.phases else self.frame + 1
-        f = int(clamp(f, 1, self.total))
-        self.phase_set(o, f, self.clone_items(o, o._pitems.get(key, [])))
+    def phase_duplicate(self, o, did):
+        new = o.new_drawing(self.clone_items(o, o._pitems.get(did, [])), after=did)
+        f = int(clamp(self.frame if self.frame not in o.phases else self.frame + 1, 1, self.total))
+        o.expose(f, new)
         self.goto(f)
-        self.msg(f"Drawing duplicated to frame {f}")
+        self.ph_sel = {new}
+        self.msg(f"Drawing duplicated, shown from frame {f}")
 
-    def phase_delete(self, o, keys):
-        for k in keys:
-            if k == 0:
+    def phase_delete(self, o, ids):
+        """Deletes drawings from the Level Strip only. The first drawing can only be emptied: a layer always keeps one."""
+        for did in ids:
+            if did == 0:
                 o._pitems[0] = []
-            elif k in o.phases:
-                o.phases.remove(k)
-                o._pitems.pop(k, None)
+                continue
+            o._pitems.pop(did, None)
+            if did in o.dorder:
+                o.dorder.remove(did)
+            for f in [f for f in o.phases if o.pmap.get(f) == did]:
+                o.phases.remove(f)
+                o.pmap.pop(f, None)
         self.sel = [s for s in self.sel if not s.owner]
         self.ph_sel = set()
         self.msg("Drawing deleted")
+
+    def phase_reorder(self, o, ids, index):
+        """Move drawings (in their current order) so that they start at position `index` of the Level Strip."""
+        moving = [i for i in o.dorder if i in ids]
+        rest = [i for i in o.dorder if i not in ids]
+        index = int(clamp(index - sum(1 for i in o.dorder[:index] if i in ids), 0, len(rest)))
+        o.dorder = rest[:index] + moving + rest[index:]
 
     def jump_phase(self, d):
         o = self.psel
@@ -1538,6 +1714,10 @@ class AppBase:
                 self.link(made[name], made[par], quiet=True)
         self.sel = list(made.values())
         self.active_layer = made["Head"]
+        try:
+            self.arrange_nodes()                               # tidy tree instead of a mess in the Schematic
+        except Exception:  # noqa
+            pass
         self.msg("Body layers created and parented. Draw each part in its layer, move the anchors onto the joints, then use Do the Rig")
 
     def do_rig(self):
@@ -2514,6 +2694,7 @@ class AppBase:
             fn, self.drag_end = self.drag_end, None
             fn()
         self.drag, self.press_slot, self.autoscroll = None, None, None
+        self.ph_ghost, self.ph_drop = None, None
         if lib_drop:
             for o_, b_, k_ in getattr(self, "_move_undo", []):                   # the drag only carried them there: put them back
                 o_.base.update(b_)
@@ -2650,17 +2831,34 @@ class AppBase:
         elif k == pygame.K_SPACE:
             self.toggle_play()
         elif ctrl and k == pygame.K_c:
-            self.kf_copy() if (self.kf_sel and self.r_tl.collidepoint(pos)) else self.copy_sel()
+            if self.fr_sel and self.frame_mode and self.r_tl.collidepoint(pos):
+                self.fr_copy()
+            else:
+                self.kf_copy() if (self.kf_sel and self.r_tl.collidepoint(pos)) else self.copy_sel()
         elif ctrl and k == pygame.K_x:
             self.cut_sel()
         elif ctrl and k == pygame.K_v:
-            self.kf_paste() if (self.kf_clip and self.r_tl.collidepoint(pos)) else self.paste()
+            if self.fr_clip and self.frame_mode and self.r_tl.collidepoint(pos):
+                self.fr_paste()
+            else:
+                self.kf_paste() if (self.kf_clip and self.r_tl.collidepoint(pos)) else self.paste()
         elif k == pygame.K_d and not ctrl:
             self.default_colors()
         elif k == pygame.K_x and not ctrl:
             self.swap_colors()
         elif k in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET) and (mods & pygame.KMOD_ALT):
             self.trim_at_playhead(k == pygame.K_RIGHTBRACKET)        # Alt+[ keeps the part right of the playhead, Alt+] the part left of it
+        elif k in (pygame.K_DELETE, pygame.K_BACKSPACE) and self.frame_mode and self.fr_sel and self.r_tl.collidepoint(pos):
+            self.fr_delete()
+        elif k == pygame.K_x and ctrl and self.frame_mode and self.fr_sel and self.r_tl.collidepoint(pos):
+            self.fr_copy(cut=True)
+        elif k == pygame.K_ESCAPE and self.fr_sel:
+            self.fr_sel = set()
+        elif k in (pygame.K_DELETE, pygame.K_BACKSPACE) and self.workspace == "Drawing" and self.drawing_tab == "Level Strip" and self.r_aux.collidepoint(pos):
+            o_ = self.psel                                            # Delete over the Level Strip removes drawings, never the layer
+            lyr_ = (o_.owner or o_) if o_ else self.active_layer
+            if lyr_ is not None and lyr_.kind == "vlayer":
+                self.phase_delete(lyr_, list(self.ph_sel) or [lyr_.phase_key(self.frame)])
         elif k == pygame.K_b and not ctrl and (self.r_tl.collidepoint(pos) or (self.workspace == "Schematic" and self.r_aux.collidepoint(pos))):
             self.select_relative(children=bool(mods & pygame.KMOD_SHIFT))     # B = parent, Shift+B = children (over timeline / schematic)
         elif k == pygame.K_u:
@@ -2683,9 +2881,9 @@ class AppBase:
         elif k == pygame.K_k:
             self.key_here()
         elif k == pygame.K_w:
-            self.jump_phase(1)
+            self.substitute(1)                                        # Drawing Substitution forward
         elif k == pygame.K_q:
-            self.jump_phase(-1)
+            self.substitute(-1)                                       # Drawing Substitution backward
         elif k in (pygame.K_DELETE, pygame.K_BACKSPACE):
             if self.sel_wire is not None and self.workspace == "Schematic":
                 self.unlink(self.sel_wire)
@@ -2882,6 +3080,7 @@ class AppBase:
             if "timeline" not in hid:
                 self.safe(self.draw_timeline)
             self.safe(self.draw_splitters)
+        self.safe(self.draw_ghosts)
         self.draw_menu_bar()
         self.draw_bar()
         self.draw_toast(self.r_view if self.r_view.w else self.r_aux or self.r_view)
