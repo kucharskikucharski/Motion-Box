@@ -185,3 +185,11 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 ## 31.10.2026
 - Zrobione: jeden przycisk "+" (Drawing / Peg / Null), listy rozwijane z zaokrąglonym trójkątem, [ ] = work area (I = eyedropper), Ctrl+0 i lista zoomu pod viewerem, ogólne oko i kłódka nad warstwami, brush: grubość i kolor linii na żywo + smoothing, onion skin z grubością rysunku i miękką plamą, lewa strzałka = wartości do animacji (dzieci składane po prawej od nazwy), opcja "Only this layer" w Select i Animate
 - Otwarte: zaznaczanie klatek na warstwie (move / delete / cut / paste, W / Q), pozycja X i Y jako jedna wartość, zaznaczanie tekstu myszą, gradient, Text
+
+## 01.11.2026 - zgłoszone, jeszcze otwarte
+- Jakość podglądu (Full / 1/2 / 1/4 / 1/6) jako lista obok zoomu pod viewerem
+- Interpolacje: klawisz T przy zaznaczonych keyframe'ach otwiera okienko z miniaturami krzywych
+- Okno renderu: podgląd z paskiem timeline (all / work area); Motion Blur jako opcja renderu
+- Slider: wybór, co steruje (pozycja, skala, rotacja, przezroczystość, fazy z Level Strip); samouczek tworzenia joysticka (Up / Down / Left / Right)
+- Alpha matte dla kilku rysunków naraz (maska na grupę)
+- Grupy w nodeach, gradient, narzędzie Text, Animate dla całych warstw i nulli

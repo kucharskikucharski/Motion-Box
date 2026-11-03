@@ -1,4 +1,4 @@
-# Motion Box - update 2026-10-31 (on top of alpha 4)
+# Motion Box - update 2026-11-01 (on top of alpha 4)
 
 ## Nowe
 - **Level Strip jako prawdziwa pula rysunków** - każdy rysunek jest niezależny, warstwa zawsze ma co najmniej jeden (pusty) kafelek, rysunki zostają w panelu, dopóki ich tam nie usuniesz. Kolejność zmieniasz przeciąganiem (kreska pokazuje miejsce), widok siatki lub listy z dużymi miniaturami, miniatura podąża za kursorem podczas przeciągania.
@@ -16,6 +16,19 @@
 - **Biblioteka i import** - prawdziwe miniatury, wiele zaznaczonych, foldery, przeciąganie w obie strony, import wielu plików i sekwencji.
 - **Skróty** - [ i ] = work area, I = eyedropper, O = elipsa, Ctrl+0 = fit, lista zoomu pod viewerem, Alt+[ / Alt+] przycinają warstwę do playheada.
 - **Jedno okno programu** - drugie uruchomienie pokazuje pierwsze okno.
+
+
+## Nowe w tej paczce (timeline i Level Strip)
+- **Zaznaczanie klatek jest zawsze włączone** na warstwach typu Drawing (przycisk "Frames" usunięty). Klik = jedna klatka (warstwa się zaznacza, jej Level Strip się pokazuje, playhead idzie za klikiem), przeciągnięcie = prostokąt, **Shift** = cały obszar od pierwszej klikniętej klatki, **Ctrl** = dodawanie pojedynczych klatek. Sąsiednie zaznaczone klatki to jedno podświetlenie, na dole viewera widać liczbę zaznaczonych klatek.
+- **Żółte krawędzie** zaznaczonych klatek: przeciągnięcie wydłuża lub skraca rysunek (reszta warstwy przesuwa się razem z nim, z **Ctrl** nic się nie przesuwa).
+- **Del na klatkach** robi dziurę, **Del w Level Strip** usuwa cały kafelek, nowy przycisk **Clear** czyści kafelek z rysunku.
+- **Fill in empty cells** (prawy klik na timeline): puste klatki wypełniają się poprzednim rysunkiem do playheada.
+- **Time Stretch, Repeat, Reverse** - trzy przyciski nad numerami klatek, z oknem na liczbę klatek / powtórzeń.
+- **Timeline:** oś z numerami klatek tuż nad warstwami, ruchomy separator kolumny nazw, zoom skupiony na playheadzie, uchwyty na końcach obszaru roboczego, tytuł "Timeline" i prawdziwy przycisk "+".
+- **Q / W** wracają do pierwszego rysunku po ostatnim.
+- **Properties** są też w panelu Drawing.
+- **Tytuł okna** ma "*", gdy są niezapisane zmiany.
+- **Nowe ikony** kłódki, oka i strzałek kursora (foldery `icons/ui` i `icons/cursors`).
 
 ## Poprawki
 - Kolor z toolboxu i palety nie przemalowuje już zaznaczonych obiektów (maluje Fill Bucket albo panel Properties).

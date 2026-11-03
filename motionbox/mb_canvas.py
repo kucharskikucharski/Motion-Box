@@ -71,6 +71,80 @@ class CanvasMixin:
                 return ("rotate", i)
         return None
 
+    def group_objs(self):
+        return [o for o in self.sel if not o.locked and o.kind != "bone" and not o.kind.startswith("ctrl") and o.kind not in ("vlayer", "rlayer")]
+
+    def group_box(self):
+        """One bounding box around several selected objects (screen coordinates), or None."""
+        objs = self.group_objs()
+        if len(objs) < 2 or self.tool not in ("select", "transform") or self.rest_layer is not None:
+            return None
+        pts = [p for o in objs for p in self.box_pts(o, 0)]
+        x1, x2 = min(p[0] for p in pts), max(p[0] for p in pts)
+        y1, y2 = min(p[1] for p in pts), max(p[1] for p in pts)
+        return pygame.Rect(int(x1), int(y1), int(x2 - x1), int(y2 - y1))
+
+    def group_handles(self, r):
+        return [r.topleft, (r.centerx, r.y), r.topright, (r.right, r.centery), r.bottomright, (r.centerx, r.bottom), r.bottomleft, (r.x, r.centery)]
+
+    def group_hit(self, mx, my):
+        r = self.group_box()
+        if r is None:
+            return None
+        hs = self.group_handles(r)
+        for i, h in enumerate(hs):
+            if i % 2 == 0 and math.hypot(mx - h[0], my - h[1]) <= 8:           # corners scale
+                return ("scale", i)
+        for i, h in enumerate(hs):
+            if i % 2 == 0 and 8 < math.hypot(mx - h[0], my - h[1]) <= 26 and not r.collidepoint(mx, my):   # just outside a corner: rotate
+                return ("rotate", i)
+        return None
+
+    def start_group_scale(self, idx):
+        r = self.group_box()
+        hs = self.group_handles(r)
+        px, py = self.s2a(*hs[(idx + 4) % 8])                              # the opposite corner stays where it is
+        hx, hy = self.s2a(*hs[idx])
+        d0 = max(1.0, math.hypot(hx - px, hy - py))
+        objs = self.group_objs()
+        st = [(o, *self.world(o, self.frame)[:2], o.value("scale", self.frame)) for o in objs]
+
+        def drag(mx, my):
+            ax, ay = self.s2a(mx, my)
+            k = clamp(math.hypot(ax - px, ay - py) / d0, 0.05, 20)
+            if pygame.key.get_mods() & pygame.KMOD_ALT:                    # Alt: scale from the centre
+                pass
+            for o, x, y, s in st:
+                self.set_world_pos(o, px + k * (x - px), py + k * (y - py))
+                if "scale" not in self.locked_props(o):
+                    self.set_prop(o, "scale", round(s * k, 4))
+        return drag
+
+    def start_group_rotate(self, idx):
+        r = self.group_box()
+        cx, cy = self.s2a(*r.center)
+        objs = self.group_objs()
+        mx0, my0 = pygame.mouse.get_pos()
+        a0 = math.atan2(self.s2a(mx0, my0)[1] - cy, self.s2a(mx0, my0)[0] - cx)
+        st = [(o, *self.world(o, self.frame)[:2], o.value("rotation", self.frame)) for o in objs]
+        self.rotating = True
+
+        def drag(mx, my):
+            ax, ay = self.s2a(mx, my)
+            da = math.atan2(ay - cy, ax - cx) - a0
+            if pygame.key.get_mods() & pygame.KMOD_SHIFT:                  # 15 degree steps
+                da = math.radians(round(math.degrees(da) / 15) * 15)
+            c, s_ = math.cos(da), math.sin(da)
+            for o, x, y, rot in st:
+                self.set_world_pos(o, cx + (x - cx) * c - (y - cy) * s_, cy + (x - cx) * s_ + (y - cy) * c)
+                if "rotation" not in self.locked_props(o):
+                    self.set_prop(o, "rotation", round(rot + math.degrees(da), 1))
+
+        def end():
+            self.rotating = False
+        self.drag_end = end
+        return drag
+
     def radius_dots(self, o):
         x, y, s, rot = self.world(o, self.frame)
         hw, hh = o.w / 2, o.h / 2
@@ -119,7 +193,7 @@ class CanvasMixin:
     def pick(self, mx, my):
         ax, ay = self.s2a(mx, my)
         for o in self.objs:
-            if not o.visible or o.locked or not self.in_range(o) or o.name in self.matte_sources() or (self.view["render"] and not o.render):
+            if not self.eff_visible(o) or self.eff_locked(o) or not self.in_range(o) or o.name in self.matte_sources() or (self.view["render"] and not o.render):
                 continue
             if o.kind == "vlayer":                           # shapes inside a vector layer
                 for it in o.items:
@@ -198,7 +272,7 @@ class CanvasMixin:
         try:
             sysmap = {"arrow": pygame.SYSTEM_CURSOR_ARROW, "hand": pygame.SYSTEM_CURSOR_HAND, "cross": pygame.SYSTEM_CURSOR_CROSSHAIR,
                       "sizewe": pygame.SYSTEM_CURSOR_SIZEWE, "sizens": pygame.SYSTEM_CURSOR_SIZENS, "move": pygame.SYSTEM_CURSOR_SIZEALL}
-            pygame.mouse.set_cursor(sysmap[kind] if kind in sysmap else self.cursor_surface(kind))
+            pygame.mouse.set_cursor(sysmap[kind] if (kind in sysmap and not (kind == "move" and cursor_png("move") is not None)) else self.cursor_surface(kind))
         except Exception:  # noqa
             pass
 
@@ -338,6 +412,8 @@ class CanvasMixin:
             return
         if tool == "bone_anim":
             return self.bone_anim_click(mx, my)
+        if tool == "bone_edit":
+            return self.bone_edit_click(mx, my)
         if tool in ("pen", "multiline", "text", "taper", "lipsync", "view_rotate"):
             self.msg(f"{TOOL_INFO[tool][0]}: coming soon")
             return
@@ -349,6 +425,9 @@ class CanvasMixin:
             ax_, ay_ = self.a2s(wx, wy)
             if math.hypot(mx - ax_, my - ay_) <= 6:                    # the little cross is the anchor point
                 return self.start_anchor(mx, my)
+        gh = self.group_hit(mx, my) if tool in ("select", "transform") else None
+        if gh:
+            return self.start_group_scale(gh[1]) if gh[0] == "scale" else self.start_group_rotate(gh[1])
         rc_ = next((c for c in self.sel if c.kind == "ctrl_rot" and not c.locked), None)
         if rc_ is not None and tool in ("select", "transform", "animate"):
             pk = self.pick(mx, my)
@@ -701,7 +780,77 @@ class CanvasMixin:
             self.button((v.x + 14 + i * 96, v.y + 12, 90, 24), n, lambda mx, my, key=key: setattr(self, "animate_filter", key),
                         active=self.animate_filter == key, font=self.f11, hint="Animate tool: only these can be selected and moved")
 
-    def start_tip(self, o):
+    def snap_point(self, ax, ay, exclude=None):
+        """The magnet of Edit Skeleton: joints and tips of other bones and the anchors of layers within a few pixels."""
+        best, bd = None, 12 / max(self.zoom, 0.05)
+        for o in self.objs:
+            if o is exclude or o.kind.startswith("ctrl"):
+                continue
+            pts = [self.world(o, self.frame)[:2]]
+            if o.kind == "bone":
+                pts.append(self.bone_end(o))
+            for p in pts:
+                d = math.hypot(p[0] - ax, p[1] - ay)
+                if d < bd:
+                    best, bd = p, d
+        return best
+
+    def bone_edit_click(self, mx, my):
+        """Edit Skeleton: drag the ball at the end of a bone, or its joint. Both stick to anchors and to other bones; a joint dropped on another bone's tip is parented to it."""
+        tip = joint = None
+        for b in self.objs:
+            if b.kind != "bone" or b.locked:
+                continue
+            tx, ty = self.a2s(*self.bone_end(b))
+            jx, jy = self.a2s(*self.world(b, self.frame)[:2])
+            if math.hypot(mx - tx, my - ty) <= 11:
+                tip = b
+            elif math.hypot(mx - jx, my - jy) <= 11:
+                joint = b
+        if tip is not None:
+            self.sel = [tip]
+            return self.start_tip(tip, snap=True)
+        if joint is not None:
+            self.sel = [joint]
+            return self.start_joint(joint)
+        b = self.pick(mx, my)
+        if b is not None:
+            self.sel = [b]
+        else:
+            self.msg("Edit Skeleton: drag the ball at the end of a bone or its joint onto the anchors of your drawing")
+
+    def start_joint(self, b):
+        tx, ty = self.bone_end(b)
+        pr = self.world(b.parent, self.frame)[3] if b.parent else 0.0
+        w0 = b.w
+        kids = [c for c in self.objs if c.parent is b and abs(c.base["x"] - w0) < 0.5 and abs(c.base["y"]) < 0.5]
+
+        def drag(mx, my):
+            ax, ay = self.s2a(mx, my)
+            sp = self.snap_point(ax, ay, b)
+            if sp:
+                ax, ay = sp
+            s = self.world(b, self.frame)[2]
+            dx, dy = tx - ax, ty - ay
+            L = max(8.0, math.hypot(dx, dy) / max(s, 0.01))
+            self.set_world_pos(b, ax, ay)
+            if "rotation" not in self.locked_props(b):
+                b.set_value("rotation", self.frame, round(math.degrees(math.atan2(dy, dx)) - pr, 1))
+            b.w, b.h, b.anchor = L, clamp(L * 0.16, 8, 20), (-L / 2, 0.0)
+            for c in kids:
+                c.base["x"] = L
+
+        def end():                                                     # the joint was dropped on the tip of another bone: it becomes its child
+            jx, jy = self.world(b, self.frame)[:2]
+            for o in self.objs:
+                if o is not b and o.kind == "bone" and o.parent is not b and math.hypot(self.bone_end(o)[0] - jx, self.bone_end(o)[1] - jy) < 12 / max(self.zoom, 0.05):
+                    if self.link(b, o, quiet=True) is not False:
+                        self.msg(f"{b.name} is now a child of {o.name}")
+                    break
+        self.drag_end = end
+        return drag
+
+    def start_tip(self, o, snap=False):
         """Drag the ball at the end of a bone: its bend and length change, the joint (anchor) stays where it is."""
         x, y, s, r = self.world(o, self.frame)
         pr = self.world(o.parent, self.frame)[3] if o.parent else 0.0
@@ -710,6 +859,10 @@ class CanvasMixin:
 
         def drag(mx, my):
             ax, ay = self.s2a(mx, my)
+            if snap:
+                sp = self.snap_point(ax, ay, o)
+                if sp:
+                    ax, ay = sp
             dx, dy = ax - x, ay - y
             L = max(8.0, math.hypot(dx, dy) / s)
             if "rotation" not in self.locked_props(o):
@@ -1019,10 +1172,18 @@ class CanvasMixin:
         self.screen.blit(img, img.get_rect(center=(int(cx), int(cy))))
 
     def eye_icon(self, cx, cy, col):
+        ic = ui_icon("eye_on" if col[0] > 150 else "eye_off")
+        if ic is not None:
+            self.screen.blit(ic, ic.get_rect(center=(cx, cy)))
+            return
         pygame.draw.ellipse(self.screen, col, (cx - 8, cy - 5, 16, 10), 2)
         pygame.draw.circle(self.screen, col, (cx, cy), 2)
 
     def lock_icon(self, cx, cy, col, locked):
+        ic = ui_icon("lock_on" if locked else "lock_off")
+        if ic is not None:
+            self.screen.blit(ic, ic.get_rect(center=(cx, cy)))
+            return
         pygame.draw.rect(self.screen, col, (cx - 5, cy - 1, 10, 7), border_radius=2)
         if locked:                                           # closed padlock
             pygame.draw.arc(self.screen, col, (cx - 3, cy - 7, 6, 10), 0, math.pi, 2)
@@ -1041,7 +1202,7 @@ class CanvasMixin:
         pygame.draw.rect(self.screen, self.art_color, ab)
         src = self.matte_sources()
         for o in reversed(self.objs):
-            if o.visible and self.in_range(o) and o.name not in src and not (self.view["render"] and (not o.render or o.kind in ("null", "peg", "bone") or o.kind.startswith("ctrl") or self.is_controller(o))) and (self.rest_layer is None or o is self.rest_layer):
+            if self.eff_visible(o) and self.in_range(o) and o.name not in src and not (self.view["render"] and (not o.render or o.kind in ("null", "peg", "bone") or o.kind.startswith("ctrl") or self.is_controller(o))) and (self.rest_layer is None or o is self.rest_layer):
                 self.draw_layer(o)
                 if o.caption:                                  # slider / controller name above the object
                     bp = self.box_pts(o, 6)
@@ -1052,6 +1213,22 @@ class CanvasMixin:
                        pygame.Rect(vr.x, ab.y, ab.x - vr.x, ab.h), pygame.Rect(ab.right, ab.y, vr.right - ab.right, ab.h)):
                 if rc.w > 0 and rc.h > 0:
                     pygame.draw.rect(self.screen, COLOR_VIEWPORT, rc)
+        gb = self.group_box()                                        # several selected objects: one frame around all of them, scale / rotate them together
+        if gb is not None:
+            pygame.draw.rect(self.screen, (120, 160, 255), gb.inflate(6, 6), 1)
+            for i, h in enumerate(self.group_handles(gb)):
+                if i % 2 == 0:
+                    pygame.draw.rect(self.screen, (255, 255, 255), (h[0] - 4, h[1] - 4, 8, 8), border_radius=2)
+                    pygame.draw.rect(self.screen, (60, 90, 200), (h[0] - 4, h[1] - 4, 8, 8), 1, border_radius=2)
+        for b_ in self.sel:                                          # the bend limit of a bone: an arc at its joint
+            if b_.kind == "bone" and b_.rot_limit:
+                jx, jy = self.a2s(*self.world(b_, self.frame)[:2])
+                base = self.world(b_.parent, self.frame)[3] if b_.parent else 0.0
+                arc = [(jx + 46 * math.cos(math.radians(base + a)), jy + 46 * math.sin(math.radians(base + a)))
+                       for a in [b_.rot_limit[0] + (b_.rot_limit[1] - b_.rot_limit[0]) * k / 24 for k in range(25)]]
+                pygame.draw.lines(self.screen, (255, 205, 60), False, arc, 3)
+                pygame.draw.line(self.screen, (255, 205, 60), (jx, jy), arc[0], 1)
+                pygame.draw.line(self.screen, (255, 205, 60), (jx, jy), arc[-1], 1)
         o_ = self.psel                                              # a rectangle shows round white dots at its corners: drag = round the corners
         if o_ is not None and o_.kind == "rect" and len(self.sel) == 1 and not o_.locked and self.rest_layer is None:
             mp = pygame.mouse.get_pos()
@@ -1840,13 +2017,15 @@ class CanvasMixin:
             self.rounded_tri([(pb.x + 8, pb.y + 6), (pb.x + 8, pb.y + 16), (pb.x + 16, pb.y + 11)], (235, 235, 235))
         self.hit(pb, lambda mx, my: setattr(self, "ph_play", not self.ph_play))
         y += 122
-        bw = (w - 8) // 3
+        bw = (w - 12) // 4
         self.button((x, y, bw, 30), "+ New", lambda mx, my: self.add_phase(lyr), color=COLOR_ACCENT_L, radius=15, font=self.f11,
                     hint="A blank drawing next to the active one, shown from the playhead")
-        self.button((x + bw + 4, y, bw, 30), "Duplicate", lambda mx, my: self.phase_duplicate(lyr, cur), radius=15, font=self.f11,
+        self.button((x + (bw + 4), y, bw, 30), "Duplicate", lambda mx, my: self.phase_duplicate(lyr, cur), radius=15, font=self.f11,
                     hint="Copy the active drawing")
-        self.button((x + 2 * (bw + 4), y, bw, 30), "Delete", lambda mx, my: self.phase_delete(lyr, list(self.ph_sel) or [cur]), radius=15, font=self.f11,
-                    hint="Delete the selected drawings (the layer stays, it always keeps one drawing)")
+        self.button((x + 2 * (bw + 4), y, bw, 30), "Clear", lambda mx, my: self.phase_clear(lyr, list(self.ph_sel) or [cur]), radius=15, font=self.f11,
+                    hint="Empty the selected drawings but keep their tiles")
+        self.button((x + 3 * (bw + 4), y, bw, 30), "Delete", lambda mx, my: self.phase_delete(lyr, list(self.ph_sel) or [cur]), radius=15, font=self.f11,
+                    hint="Delete the selected tiles (Del does the same). The layer stays, it always keeps one drawing")
         y += 38
         self.checkbox(x, y + 2, self.auto_phase, lambda mx, my: setattr(self, "auto_phase", not self.auto_phase),
                       "Auto-create: drawing on a frame that does not start a drawing makes a NEW drawing there instead of drawing over the old one")

@@ -534,6 +534,22 @@ class PanelsMixin:
                        lambda v: [setattr(s, "radius", clamp(v, 0, min(s.w, s.h) / 2)) for s in self.sel if s.kind == "rect"], "radius", numeric=True,
                        hint="Rounds the corners. Resizing does not change it. You can also drag the white dots at the corners")
             y += 38
+        if o.kind == "polygon":
+            self.txt("Corners", x, y + 6, self.f11, COLOR_MUTED)
+            self.field((x + w - 96, y, 96, 28), f"{int(o.sides)}", lambda v: [setattr(s, "sides", int(clamp(v, 3, 24))) for s in self.sel if s.kind == "polygon"],
+                       "sides", numeric=True, hint="Number of corners (3 = triangle, 5 = pentagon ...)")
+            y += 38
+        if o.kind == "bone":                                          # a limit for how far the joint may bend, drawn as an arc
+            on = bool(o.rot_limit)
+            self.checkbox(x, y + 2, on, lambda mx, my: setattr(o, "rot_limit", None if o.rot_limit else (-90.0, 90.0)), "Limit how far this joint may bend")
+            self.txt("Bend limit", x + 28, y + 3, self.f11)
+            if on:
+                y += 30
+                self.txt("Min", x, y + 6, self.f11, COLOR_MUTED)
+                self.field((x + 30, y, 64, 28), f"{o.rot_limit[0]:g}", lambda v: setattr(o, "rot_limit", (clamp(v, -360, o.rot_limit[1]), o.rot_limit[1])), "lim_min", numeric=True)
+                self.txt("Max", x + 106, y + 6, self.f11, COLOR_MUTED)
+                self.field((x + 138, y, 64, 28), f"{o.rot_limit[1]:g}", lambda v: setattr(o, "rot_limit", (o.rot_limit[0], clamp(v, o.rot_limit[0], 360))), "lim_max", numeric=True)
+            y += 38
         self.heading(x, y, "Arrange", "Align to")
         y += 28
         if len(self.sel) >= 2:                                         # two or more objects: align to the artboard or to each other
@@ -1141,6 +1157,36 @@ class PanelsMixin:
         self.button((box.right - 24 - 120, by, 120, 36), "Import",
                     lambda mx, my: (setattr(self, "seq_dlg", None), self.import_footage(d["path"], as_seq=d["as_seq"])),
                     color=COLOR_ACCENT_L, radius=18, font=self.fb)
+
+    def draw_time_dlg(self):
+        d = self.tdlg
+        if not d:
+            return
+        box = pygame.Rect(0, 0, 392, 214 if d["kind"] == "stretch" else 262)
+        box.center = (self.W // 2, self.H // 2)
+        self.hit((0, 0, self.W, self.H), lambda mx, my: setattr(self, "tdlg", None))
+        self.rrect(box, (32, 34, 40), 16)
+        self.rrect(box, (70, 70, 78), 16, 1)
+        self.hit(box, lambda mx, my: None)
+        self.txt("Time Stretch" if d["kind"] == "stretch" else "Repeat", box.x + 24, box.y + 20, self.f20)
+        self.txt(f"Selected frames: {d['n']}", box.x + 24, box.y + 58, self.f12, COLOR_MUTED)
+        y = box.y + 90
+        if d["kind"] == "stretch":
+            self.txt("New length (frames)", box.x + 24, y + 6, self.f12)
+            self.field((box.right - 24 - 96, y, 96, 30), f"{int(d['new'])}", lambda v: d.__setitem__("new", int(clamp(v, 1, 9999))), "td_new", numeric=True,
+                       hint="The selected frames become this many frames long; everything after them moves along")
+            y += 42
+        else:
+            self.txt("Repeat (times)", box.x + 24, y + 6, self.f12)
+            self.field((box.right - 24 - 96, y, 96, 30), f"{int(d['times'])}", lambda v: d.__setitem__("times", int(clamp(v, 1, 999))), "td_times", numeric=True,
+                       hint="How many times the selected frames are repeated after themselves")
+            y += 42
+            self.txt("Up to frame (0 = use the times)", box.x + 24, y + 6, self.f12)
+            self.field((box.right - 24 - 96, y, 96, 30), f"{int(d['until'])}", lambda v: d.__setitem__("until", int(clamp(v, 0, 99999))), "td_until", numeric=True,
+                       hint="Repeat the selected frames until this frame")
+            y += 42
+        self.button((box.right - 24 - 96, box.bottom - 24 - 30, 96, 30), "Apply", lambda mx, my: self.time_apply(), color=COLOR_ACCENT_L, radius=15)
+        self.button((box.right - 24 - 96 - 104, box.bottom - 24 - 30, 96, 30), "Cancel", lambda mx, my: setattr(self, "tdlg", None), radius=15)
 
     def draw_layer_dlg(self):
         if not self.layer_dlg:

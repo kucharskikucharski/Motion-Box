@@ -314,6 +314,30 @@ def cursor_png(kind):
                 except Exception:  # noqa
                     sf = None
                 break
+        if sf is not None:                                    # a thin dark outline so the small arrows stay visible on any background
+            w, h = sf.get_size()
+            out = pygame.Surface((w + 2, h + 2), pygame.SRCALPHA)
+            dark = sf.copy()
+            dark.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MULT)
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+                out.blit(dark, (1 + dx, 1 + dy))
+            out.blit(sf, (1, 1))
+            sf = out
+        _icon_cache[key] = (sf, True)
+    return _icon_cache[key][0]
+
+
+def ui_icon(name):
+    """Small interface icons from icons/ui/ (lock_on, lock_off, eye_on, eye_off)."""
+    key = ("ui", name)
+    if key not in _icon_cache:
+        sf = None
+        p = os.path.join(ICONS_DIR, "ui", name + ".png")
+        if os.path.exists(p):
+            try:
+                sf = pygame.image.load(p).convert_alpha()
+            except Exception:  # noqa
+                sf = None
         _icon_cache[key] = (sf, True)
     return _icon_cache[key][0]
 
@@ -547,7 +571,7 @@ def ease_t(t, e):
 # ---------------------------------------------------------------- model
 FIELDS = ("name", "kind", "w", "h", "pts", "fill", "fill_on", "fill_a", "stroke_on", "stroke", "stroke_a",
           "stroke_w", "base", "expr", "visible", "locked", "render", "expanded", "label", "node", "phases",
-          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius")
+          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius", "sep_xy")
 
 
 class Obj:
@@ -590,6 +614,7 @@ class Obj:
         self.pin = False          # bones: the joint is locked (rotation cannot be changed)
         self.watch = []           # stopwatch ON: the properties that may be keyframed (all off by default)
         self.radius = 0           # rectangle: corner radius (not changed by resizing)
+        self.sep_xy = False       # position X and Y are animated together (one row) unless this is switched on
         self.matte, self.matte_inv, self.caption = None, False, ""   # alpha matte layer (name), inverted?, text shown above sliders
 
     def value(self, prop, f):
@@ -647,6 +672,9 @@ class Obj:
 
     def items_at(self, f):
         return self._pitems.get(self.phase_key(f), [])
+
+    def props_of(self, p):                                    # the properties one timeline row stands for
+        return ("x", "y") if (p == "x" and not self.sep_xy) else (p,)
 
     def key_frames(self, prop=None):
         if prop:

@@ -81,6 +81,7 @@ class AppBase:
         self.single_layer, self.brush_smooth = False, 40
         self.ph_view, self.ph_tiles, self.ph_drop, self.ph_ghost, self._pal_click = "grid", [], None, None, (None, 0)
         self.frame_mode, self.fr_sel, self.fr_clip = True, set(), None
+        self.tl_lcw, self.fr_anchor, self.tdlg, self._title_t, self._title = 240, None, None, 0, ""
         self.pal_scroll, self.lvl_scroll, self.pal_max, self.lvl_max, self.pal_area = 0, 0, 0, 0, pygame.Rect(0, 0, 0, 0)
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
@@ -678,6 +679,8 @@ class AppBase:
         v = o.value(p, f)
         if p == "rotation" and o.ik and self._ik_depth < 1:
             v = self.ik_rotation(o, f, v)
+        if p == "rotation" and o.rot_limit:                     # the bend limit of a joint
+            v = clamp(v, o.rot_limit[0], o.rot_limit[1])
         ex = o.expr.get(p)
         if ex and self._expr_depth < 4:
             self._expr_depth += 1
@@ -976,7 +979,7 @@ class AppBase:
         base = min(f for _, _, f in self.kf_sel)
         self.kf_clip = []
         for o, p, f in self.kf_sel:
-            props = [(pp, o.keys[pp][f]) for pp in (PROPS if p is None else (p,)) if f in o.keys[pp]]
+            props = [(pp, o.keys[pp][f]) for pp in (PROPS if p is None else o.props_of(p)) if f in o.keys[pp]]
             if props:
                 self.kf_clip.append((o, p, f - base, props, o.ease.get(f) if p is None else None))
         self.msg(f"Copied {len(self.kf_clip)} keyframe(s) - Ctrl+V pastes them at the playhead")
@@ -1013,19 +1016,38 @@ class AppBase:
         self.rest_layer, self.active_layer, self.sel = lyr, lyr, [lyr]
         self.msg(f"Drawing view: {lyr.name} without the rig and animation. Esc leaves it")
 
+    def eff_visible(self, o):
+        while o is not None:                                      # a hidden parent hides everything below it
+            if not o.visible:
+                return False
+            o = o.parent
+        return True
+
+    def eff_locked(self, o):
+        while o is not None:
+            if o.locked:
+                return True
+            o = o.parent
+        return False
+
     def watched(self, o, p):
         return p in o.watch or bool(o.keys[p])
 
     def set_watch(self, o, p):
+        ps = o.props_of(p)
         if p in o.watch or o.keys[p]:                              # switching a stopwatch off removes that value's keyframes
-            if o.keys[p]:
+            if any(o.keys[q] for q in ps):
                 self.push_undo()
-                o.keys[p] = {}
-                self.msg(f"{PROP_LABEL[p]}: keyframes removed, the value stays as it is now")
-            if p in o.watch:
-                o.watch.remove(p)
+                for q in ps:
+                    o.keys[q] = {}
+                self.msg(f"{'Position' if len(ps) == 2 else PROP_LABEL[p]}: keyframes removed, the value stays as it is now")
+            for q in ps:
+                if q in o.watch:
+                    o.watch.remove(q)
         else:
-            o.watch.append(p)
+            for q in ps:
+                if q not in o.watch:
+                    o.watch.append(q)
 
     def descendants(self, o):
         out, stack = [], [o]
@@ -1038,14 +1060,33 @@ class AppBase:
         return out
 
     def key_prop(self, o, p):
-        if p not in o.watch:
-            o.watch.append(p)
+        ps = o.props_of(p)                                        # Position is one row: X and Y get their keyframe together
+        for q in ps:
+            if q not in o.watch:
+                o.watch.append(q)
+        name = "Position" if len(ps) == 2 else PROP_LABEL[p]
         if self.frame in o.keys[p]:
-            del o.keys[p][self.frame]
-            self.msg(f"{PROP_LABEL[p]}: keyframe {self.frame} removed")
+            for q in ps:
+                o.keys[q].pop(self.frame, None)
+            self.msg(f"{name}: keyframe {self.frame} removed")
         else:
-            o.keys[p][self.frame] = o.value(p, self.frame)
-            self.msg(f"{PROP_LABEL[p]}: keyframe {self.frame} on {o.name}")
+            for q in ps:
+                o.keys[q][self.frame] = o.value(q, self.frame)
+            self.msg(f"{name}: keyframe {self.frame} on {o.name}")
+
+    def set_sep_xy(self, o, sep):
+        """Position X and Y as one value (default) or as two values with their own keyframes."""
+        if not sep:                                               # combining: both axes get a keyframe on every frame either had one
+            frames = set(o.keys["x"]) | set(o.keys["y"])
+            for f in frames:
+                for q in ("x", "y"):
+                    o.keys[q][f] = o.value(q, f)
+            if "x" in o.watch or "y" in o.watch:
+                for q in ("x", "y"):
+                    if q not in o.watch:
+                        o.watch.append(q)
+        o.sep_xy = sep
+        self.msg("Position X and Y are separate values now" if sep else "Position X and Y are one value now")
 
     def toggle_global_key(self, mx=0, my=0):
         self.global_key = not self.global_key
@@ -1275,6 +1316,13 @@ class AppBase:
         self.sel = [s for s in self.sel if not s.owner]
         self.ph_sel = set()
         self.msg("Drawing deleted")
+
+    def phase_clear(self, o, ids):
+        for did in ids:
+            if did in o._pitems:
+                o._pitems[did] = []
+        self.sel = [s for s in self.sel if not s.owner]
+        self.msg("Drawing cleared (the tile stays)")
 
     def phase_reorder(self, o, ids, index):
         """Move drawings (in their current order) so that they start at position `index` of the Level Strip."""
@@ -1561,7 +1609,7 @@ class AppBase:
         self.foot_sel = fid
         fo = self.footage_by_id(fid)
         extra = [] if not fo or fo["type"] == "solid" else [("Show in file explorer", lambda: self.show_in_explorer(self.footage_abs(fo)))]
-        self.ctx = {"pos": pos, "items": [("Import element to scene", lambda: self.add_footage(fid)), ("Replace...  (Ctrl+H)", lambda: self.start_replace(fid))] + extra + [("Delete from project", lambda: self.delete_footage(fid)), ("Delete all unused footage", self.delete_unused_footage)]}
+        self.ctx = {"pos": pos, "items": [("Load into scene", lambda: self.add_footage(fid)), ("Replace footage...  (Ctrl+H)", lambda: self.start_replace(fid))] + extra + [("Delete from project", lambda: self.delete_footage(fid)), ("Delete unused footage", self.delete_unused_footage)]}
         return
         self.ctx = {"pos": pos, "items": [("Import element to scene", lambda: self.add_footage(fid)),
                                          ("Delete from project", lambda: self.delete_footage(fid)),
@@ -1804,7 +1852,7 @@ class AppBase:
             self.screen, self.zoom, self.ox, self.oy, self.frame = surf, 1.0, 0.0, 0.0, f
             src = self.matte_sources()
             for o in reversed(self.objs):
-                if o.visible and o.render and not o.kind.startswith("ctrl") and o.kind not in ("null", "peg", "bone", "pill", "rsquare") \
+                if self.eff_visible(o) and o.render and not o.kind.startswith("ctrl") and o.kind not in ("null", "peg", "bone", "pill", "rsquare") \
                         and not o.limit and o.name not in src and self.in_range(o, f):
                     self.draw_layer(o, f)
         finally:
@@ -2053,7 +2101,7 @@ class AppBase:
     # ----------------------------------------------------- keyframe selection
     def delete_keys(self):
         for o, p, f in self.kf_sel:
-            for pp in (PROPS if p is None else (p,)):
+            for pp in (PROPS if p is None else o.props_of(p)):
                 o.keys[pp].pop(f, None)
             if p is None:
                 o.ease.pop(f, None)
@@ -2066,7 +2114,7 @@ class AppBase:
             groups.setdefault((id(o), p), (o, p, []))[2].append(f)
         for o, p, frames in groups.values():
             frames = sorted(set(frames))
-            for pp in (PROPS if p is None else (p,)):
+            for pp in (PROPS if p is None else o.props_of(p)):
                 vals = [o.keys[pp].get(f) for f in frames]
                 for f, v in zip(frames, reversed(vals)):
                     if v is None:
@@ -2076,7 +2124,7 @@ class AppBase:
         self.msg("Reversed the order of the selected keyframes")
 
     def add_key_at(self, o, p, f):
-        for pp in (PROPS if p is None else (p,)):
+        for pp in (PROPS if p is None else o.props_of(p)):
             if p is None and not self.watched(o, pp):
                 continue
             o.keys[pp][f] = o.value(pp, f)
@@ -2483,10 +2531,13 @@ class AppBase:
         x = rect.centerx - w // 2 if center else rect.x + 8
         if editing:
             self.edit["tx"] = x
-            if self.edit.get("fresh") and s:                        # whole value selected
-                self.rrect((x - 2, rect.centery - 9, w + 4, 18), COLOR_ACCENT, 9)
+            r_ = self.ed_range(self.edit)
+            if r_ and s:                                            # the selected part
+                x1 = x + self.f12.size(s[:r_[0]])[0]
+                x2 = x + self.f12.size(s[:r_[1]])[0]
+                self.rrect((x1 - 2, rect.centery - 9, max(4, x2 - x1 + 4), 18), COLOR_ACCENT, 6)
         self.txt(s, x, rect.centery - 8, self.f12, COLOR_TEXT)
-        if editing and int(time.time() * 2) % 2 == 0 and not self.edit.get("fresh"):
+        if editing and int(time.time() * 2) % 2 == 0 and not self.ed_range(self.edit):
             cx = x + self.f12.size(s[:self.edit.get("cur", len(s))])[0]
             pygame.draw.line(self.screen, COLOR_TEXT, (cx, rect.centery - 8), (cx, rect.centery + 8), 1)
         self.pop_clip(prev)
@@ -2523,6 +2574,22 @@ class AppBase:
                 self.begin_edit(fid, text, cb, True)
         self.drag_end = end
         return drag
+
+    def ed_range(self, ed):
+        """The selected part of the text being edited: (from, to) or None."""
+        if ed.get("fresh"):
+            return (0, len(ed["text"])) if ed["text"] else None
+        s = ed.get("sel")
+        if s is None or s == ed["cur"]:
+            return None
+        return min(s, ed["cur"]), max(s, ed["cur"])
+
+    def ed_replace(self, ed, ins):
+        r = self.ed_range(ed)
+        a, b = r if r else (ed["cur"], ed["cur"])
+        ed["text"] = ed["text"][:a] + ins + ed["text"][b:]
+        ed["cur"], ed["fresh"], ed["sel"] = a + len(ins), False, None
+        self.sugg_i = 0
 
     def begin_edit(self, fid, text, cb, numeric=False):
         self.edit = {"id": fid, "text": text, "cb": cb, "numeric": numeric, "fresh": True, "cur": len(text)}
@@ -2661,7 +2728,13 @@ class AppBase:
             ed = self.edit
             ed["fresh"] = False
             tx = ed.get("tx", ed["rect"].x + 8)
-            ed["cur"] = min(range(len(ed["text"]) + 1), key=lambda i: abs(tx + self.f12.size(ed["text"][:i])[0] - pos[0]))
+            at = lambda mx: min(range(len(ed["text"]) + 1), key=lambda i: abs(tx + self.f12.size(ed["text"][:i])[0] - mx))        # noqa
+            ed["cur"] = at(pos[0])
+            ed["sel"] = ed["cur"]                                         # press and drag selects text with the mouse
+
+            def drag_sel(mx, my):
+                ed["cur"] = at(mx)
+            self.drag = drag_sel
             return
         if self.edit and self.sugg_rects:                    # expression suggestions
             for rc, i in self.sugg_rects:
@@ -2756,49 +2829,53 @@ class AppBase:
                 self.push_undo()
                 self.commit_edit()
             elif ctrl and k == pygame.K_a:
-                ed["fresh"] = True
+                ed["fresh"], ed["sel"] = True, None                       # select all
             elif ctrl and k in (pygame.K_c, pygame.K_x):
-                self.text_clip = ed["text"]
-                set_clipboard_text(ed["text"])                            # other programs can paste it too
+                r_ = self.ed_range(ed)
+                piece = ed["text"][r_[0]:r_[1]] if r_ else ed["text"]
+                self.text_clip = piece
+                set_clipboard_text(piece)                                # other programs can paste it too
                 if k == pygame.K_x:
-                    ed["text"], ed["cur"] = "", 0
+                    self.ed_replace(ed, "") if r_ else ed.update(text="", cur=0, fresh=False, sel=None)
             elif ctrl and k == pygame.K_v:
-                if ed["fresh"]:
-                    ed["text"], ed["cur"] = "", 0
                 ins = get_clipboard_text()
                 if ins is None:
                     ins = getattr(self, "text_clip", "")
                 ins = (ins.strip().splitlines() or [""])[0]
                 if ed.get("numeric"):
                     ins = "".join(ch for ch in ins if ch in "0123456789.,-+")
-                ed["text"] = ed["text"][:ed["cur"]] + ins + ed["text"][ed["cur"]:]
-                ed["cur"], ed["fresh"] = ed["cur"] + len(ins), False
+                self.ed_replace(ed, ins)
             elif k == pygame.K_ESCAPE:
                 self.edit = None
             elif k in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_HOME, pygame.K_END):
-                ed["fresh"] = False                                   # arrows / click remove the "everything selected" state
+                shift = bool(mods & pygame.KMOD_SHIFT)
+                r_ = self.ed_range(ed)
                 n, c = len(ed["text"]), ed["cur"]
-                ed["cur"] = max(0, c - 1) if k == pygame.K_LEFT else (min(n, c + 1) if k == pygame.K_RIGHT else (0 if k == pygame.K_HOME else n))
-            elif k == pygame.K_DELETE:
-                if ed["fresh"]:
-                    ed["text"], ed["cur"] = "", 0
+                if ed.get("fresh"):                                      # everything was selected: an arrow puts the caret at the start / end
+                    ed["fresh"], ed["sel"] = False, None
+                    ed["cur"] = 0 if k in (pygame.K_LEFT, pygame.K_HOME) else n
                 else:
+                    if shift and ed.get("sel") is None:
+                        ed["sel"] = c                                    # Shift + arrow: start selecting here
+                    if not shift and r_:                                 # an arrow without Shift leaves the selection at its edge
+                        ed["cur"] = r_[0] if k in (pygame.K_LEFT, pygame.K_HOME) else r_[1]
+                        ed["sel"] = None
+                    else:
+                        ed["cur"] = max(0, c - 1) if k == pygame.K_LEFT else (min(n, c + 1) if k == pygame.K_RIGHT else (0 if k == pygame.K_HOME else n))
+                        if not shift:
+                            ed["sel"] = None
+            elif k in (pygame.K_DELETE, pygame.K_BACKSPACE):
+                r_ = self.ed_range(ed)
+                if r_:
+                    self.ed_replace(ed, "")
+                elif k == pygame.K_DELETE:
                     ed["text"] = ed["text"][:ed["cur"]] + ed["text"][ed["cur"] + 1:]
-                ed["fresh"] = False
-            elif k == pygame.K_BACKSPACE:
-                if ed["fresh"]:
-                    ed["text"], ed["cur"] = "", 0
                 elif ed["cur"] > 0:
                     ed["text"] = ed["text"][:ed["cur"] - 1] + ed["text"][ed["cur"]:]
                     ed["cur"] -= 1
-                ed["fresh"] = False
             elif e.unicode and e.unicode.isprintable():
-                if ed["fresh"]:
-                    ed["text"], ed["cur"] = "", 0
-                ed["fresh"] = False
                 if not ed["numeric"] or e.unicode in "0123456789.,-+":
-                    ed["text"] = ed["text"][:ed["cur"]] + e.unicode + ed["text"][ed["cur"]:]
-                    ed["cur"] += 1
+                    self.ed_replace(ed, e.unicode)
                     self.sugg_i = 0
             return
         if k == pygame.K_ESCAPE and self.rest_layer is not None:
@@ -2959,11 +3036,17 @@ class AppBase:
         now = pygame.time.get_ticks()
         if self.workspace != self._ws_prev:                          # Properties / Library are shown in Animate, hidden in the other workspaces
             if self._ws_prev is not None:
-                if self.workspace == "Animate":
+                if self.workspace in ("Animate", "Drawing"):
                     self.hidden.discard("right")
                 else:
                     self.hidden.add("right")
             self._ws_prev = self.workspace
+        if now - self._title_t > 600 and getattr(self, "project_dir", None):      # a * in the window title = unsaved changes
+            self._title_t = now
+            t = f"Motion Box - {self.project_name}" + (" *" if self.doc_sig() != self.saved_sig else "")
+            if t != self._title:
+                self._title = t
+                pygame.display.set_caption(t)
         if RAISE_REQUEST[0]:                                         # the program was started a second time: show this window
             RAISE_REQUEST[0] = False
             self.raise_window()
@@ -3081,6 +3164,7 @@ class AppBase:
                 self.safe(self.draw_timeline)
             self.safe(self.draw_splitters)
         self.safe(self.draw_ghosts)
+        self.safe(self.draw_time_dlg)
         self.draw_menu_bar()
         self.draw_bar()
         self.draw_toast(self.r_view if self.r_view.w else self.r_aux or self.r_view)
