@@ -98,7 +98,7 @@ TOOL_INFO = {
     "brush": ("Brush", "B", "Drag to paint a vector stroke. Options (auto close / group / fill, draw under) appear at the top of the viewport."),
     "fill": ("Fill Bucket", "F", "Click a shape or closed stroke to fill it with the current fill colour."),
     "eraser": ("Eraser", "E", "Erases pixels on a raster layer (select or create a raster layer first)."),
-    "pen": ("Pen", "P", "Coming soon: bezier paths."),
+    "pen": ("Pen", "G", "Coming soon: bezier paths."),
     "null": ("Null", "N", "Click to place a null object (a target to link other objects to)."),
     "ctrl": ("Position Controller", "", "Click to place a controller that only moves (scale and rotation are locked)."),
     "ctrl_rot": ("Rotation Controller", "", "Click to place a controller that only rotates (everything else is locked)."),
@@ -130,7 +130,7 @@ SLOTS = [["select", "select_level", "transform", "anchor", "animate"], None,
          ["joy_x", "joy_y", "joy_xy"], ["ctrl", "ctrl_rot", "ctrl_posrot", "null", "peg"], ["bone", "bone_edit", "bone_anim", "bone_ik"], None,
          ["hand", "zoom", "view_rotate"]]
 KEYMAP = {pygame.K_v: "select", pygame.K_t: "transform", pygame.K_r: "rect", pygame.K_b: "brush",
-          pygame.K_e: "eraser", pygame.K_a: "animate", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_y: "anchor", pygame.K_f: "fill", pygame.K_p: "pen", pygame.K_n: "null", pygame.K_j: "bone",
+          pygame.K_e: "eraser", pygame.K_a: "animate", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_y: "anchor", pygame.K_f: "fill", pygame.K_g: "pen", pygame.K_n: "null", pygame.K_j: "bone",
           pygame.K_h: "hand", pygame.K_i: "eyedropper", pygame.K_o: "ellipse"}
 WORKSPACES = ["Drawing", "Animate", "Schematic", "Fx", "Expressions", "Script"]
 MENU_NAMES = ["File", "Edit", "Object", "Type", "Effects", "View", "Tools", "Panels"]
@@ -548,6 +548,7 @@ CTRL_SHAPE = [(0, -1), (.3, -.6), (.1, -.6), (.1, -.1), (.6, -.1), (.6, -.3), (1
 DEFAULT_EASE = (1 / 3, 1 / 3, False)   # identical to the old smoothstep
 EASE_PRESETS = [("Linear", (0.0, 0.0, False)), ("Ease In (slow start)", (0.66, 0.0, False)),
                 ("Ease Out (slow end)", (0.0, 0.66, False)), ("Ease In / Out", (0.5, 0.5, False)),
+                ("Strong Ease In", (0.92, 0.0, False)), ("Strong Ease Out", (0.0, 0.92, False)), ("Strong In / Out", (0.85, 0.85, False)),
                 ("Hold", (0.0, 0.0, True))]
 
 
@@ -571,7 +572,7 @@ def ease_t(t, e):
 # ---------------------------------------------------------------- model
 FIELDS = ("name", "kind", "w", "h", "pts", "fill", "fill_on", "fill_a", "stroke_on", "stroke", "stroke_a",
           "stroke_w", "base", "expr", "visible", "locked", "render", "expanded", "label", "node", "phases",
-          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius", "sep_xy")
+          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius", "sep_xy", "phase_src")
 
 
 class Obj:
@@ -615,6 +616,7 @@ class Obj:
         self.watch = []           # stopwatch ON: the properties that may be keyframed (all off by default)
         self.radius = 0           # rectangle: corner radius (not changed by resizing)
         self.sep_xy = False       # position X and Y are animated together (one row) unless this is switched on
+        self.phase_src = None     # name of a slider knob that chooses which drawing of the layer is shown
         self.matte, self.matte_inv, self.caption = None, False, ""   # alpha matte layer (name), inverted?, text shown above sliders
 
     def value(self, prop, f):
@@ -639,8 +641,13 @@ class Obj:
             self.base[prop] = float(v)
 
     CUR = [1]                  # the frame the program shows right now
+    PHASE_HOOK = None          # set by the program: gives the drawing a slider chooses (or None)
 
     def phase_key(self, f):                                   # which drawing is on screen at frame f
+        if self.phase_src and Obj.PHASE_HOOK is not None:         # a slider picks the drawing
+            r = Obj.PHASE_HOOK(self, f)
+            if r is not None:
+                return r
         ks = [p for p in self.phases if p <= f]
         return self.pmap.get(max(ks), 0) if ks else 0
 
@@ -658,6 +665,17 @@ class Obj:
             self.phases.append(f)
             self.phases.sort()
         self.pmap[f] = did
+
+    def normalize(self):
+        """Markers that start the same drawing that is already showing are redundant: they would only look like a new phase."""
+        prev = 0
+        for f in sorted(self.phases):
+            d = self.pmap.get(f, 0)
+            if d == prev:
+                self.phases.remove(f)
+                self.pmap.pop(f, None)
+            else:
+                prev = d
 
     def exposed_at(self, did):
         return sorted(f for f in self.phases if self.pmap.get(f, 0) == did)

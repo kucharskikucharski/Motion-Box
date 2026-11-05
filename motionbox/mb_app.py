@@ -82,6 +82,9 @@ class AppBase:
         self.ph_view, self.ph_tiles, self.ph_drop, self.ph_ghost, self._pal_click = "grid", [], None, None, (None, 0)
         self.frame_mode, self.fr_sel, self.fr_clip = True, set(), None
         self.tl_lcw, self.fr_anchor, self.tdlg, self._title_t, self._title = 240, None, None, 0, ""
+        self.preview_q, self.ease_pop, self.mblur, self.mblur_shutter = 1, None, 1, 180
+        self.jwiz = None
+        Obj.PHASE_HOOK = self.phase_from_slider
         self.pal_scroll, self.lvl_scroll, self.pal_max, self.lvl_max, self.pal_area = 0, 0, 0, 0, pygame.Rect(0, 0, 0, 0)
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
@@ -204,6 +207,14 @@ class AppBase:
             return
         self._pal_click = (i, now)
         self.apply_palette(c)
+
+    def apply_ease(self, e):
+        n = 0
+        for o, p, f in self.kf_sel:
+            self.set_ease(o, f, e)
+            n += 1
+        self.ease_pop = None
+        self.msg(f"Interpolation set on {n} keyframe(s)")
 
     def set_zoom(self, z):
         self.view_fit = False
@@ -1003,6 +1014,94 @@ class AppBase:
         self.kf_sel = new
         self.msg(f"Pasted {len(new)} keyframe(s) at frame {self.frame}")
 
+    def masked_desc_ids(self):
+        out = set()
+        for m in self.objs:                                          # a peg / null with a track matte masks everything parented to it, together
+            if m.matte and m.kind in ("null", "peg") and self.find(m.matte) is not None:
+                out.update(id(d) for d in self.descendants(m))
+        return out
+
+    def phase_from_slider(self, o, f):
+        kn = self.find(o.phase_src)
+        if kn is None or not kn.limit:
+            return None
+        x0, x1, y0, y1 = kn.limit
+        if x1 > x0:
+            t = (self.val(kn, "x", f) - x0) / (x1 - x0)
+        elif y1 > y0:
+            t = (self.val(kn, "y", f) - y0) / (y1 - y0)
+        else:
+            return None
+        n = len(o.dorder)
+        return o.dorder[int(round(clamp(t, 0.0, 1.0) * (n - 1)))] if n else None
+
+    def phase_slider_menu(self, o, pos):
+        knobs = [k for k in self.objs if k.limit]
+        items = [("Slider " + (k.parent.name if k.parent else k.name), (lambda k=k: (setattr(o, "phase_src", k.name), self.msg(f"{o.name}: the drawings follow {k.name}"))), None, o.phase_src == k.name)
+                 for k in knobs]
+        items.append(("None (drawings are chosen on the timeline)", lambda: setattr(o, "phase_src", None), None, not o.phase_src))
+        self.ctx = {"pos": pos, "items": items if knobs else [("Create a slider first (Tools > Slider X / Y)", lambda: None)]}
+
+    def jwiz_start(self, knob=None):
+        kn = knob or next((x for x in self.sel if x.limit), None)
+        if kn is None:
+            fr = self.psel
+            kn = next((c for c in self.objs if c.parent is fr and c.limit), None) if fr is not None else None
+        if kn is None:
+            self.msg("Select a joystick or a slider (its knob or its frame) first")
+            return
+        self.jwiz = {"knob": kn.name, "step": 0, "target": None, "rest": None, "rec": {}}
+        self.msg("Joystick setup: click the object the joystick should move")
+
+    JWIZ_STEPS = (("up", "UP"), ("down", "DOWN"), ("left", "LEFT"), ("right", "RIGHT"))
+
+    def jwiz_next(self):
+        w = self.jwiz
+        if w["step"] == 0:                                           # the object was chosen
+            t = self.psel
+            t = (t.owner or t) if t else None
+            kn = self.find(w["knob"])
+            if t is None or t is kn or (kn is not None and t is kn.parent):
+                self.msg("Click the object that should move (not the joystick itself)")
+                return
+            w["target"], w["rest"] = t.name, (t.value("x", self.frame), t.value("y", self.frame))
+        w["step"] += 1
+
+    def jwiz_set(self):
+        w = self.jwiz
+        t = self.find(w["target"])
+        if t is None:
+            return
+        key = self.JWIZ_STEPS[w["step"] - 1][0]
+        w["rec"][key] = (t.value("x", self.frame) - w["rest"][0], t.value("y", self.frame) - w["rest"][1])
+        self.jwiz_back_to_rest(t)
+        w["step"] += 1
+
+    def jwiz_back_to_rest(self, t):
+        w = self.jwiz
+        self.set_prop(t, "x", w["rest"][0])
+        self.set_prop(t, "y", w["rest"][1])
+
+    def jwiz_create(self):
+        w = self.jwiz
+        t, kn = self.find(w["target"]), self.find(w["knob"])
+        self.jwiz = None
+        if t is None or kn is None:
+            return
+        hx, hy = kn.limit[1], kn.limit[3]
+        rec = w["rec"]
+        g = lambda k, i: rec.get(k, (0.0, 0.0))[i]                      # noqa
+        for i, axis in enumerate(("x", "y")):
+            parts = []
+            if hx > 0:
+                parts.append(f'(layer("{kn.name}").lx / {hx:g} * {g("right", i):g} if layer("{kn.name}").lx >= 0 else -layer("{kn.name}").lx / {hx:g} * {g("left", i):g})')
+            if hy > 0:
+                parts.append(f'(layer("{kn.name}").ly / {hy:g} * {g("down", i):g} if layer("{kn.name}").ly >= 0 else -layer("{kn.name}").ly / {hy:g} * {g("up", i):g})')
+            if parts:
+                t.expr[axis] = "value + " + " + ".join(parts)
+                self.expr_bad.discard((t.name, axis))
+        self.msg(f"{t.name} now follows {kn.name}: its movement stops exactly at the positions you set")
+
     def toggle_auto_key(self, mx=0, my=0):
         self.auto_key = not self.auto_key
         self.msg("Auto Key ON: every change of position, rotation, scale or opacity makes a keyframe" if self.auto_key else "Auto Key off")
@@ -1191,6 +1290,7 @@ class AppBase:
             L.expose(a, did)
         if after is not None and after != did and (b + 1) not in L.phases:
             L.expose(b + 1, after)
+        L.normalize()
 
     def fr_delete(self):
         n = 0
@@ -1200,6 +1300,18 @@ class AppBase:
                 n += b - a + 1
         self.sel = [s for s in self.sel if not s.owner]
         self.msg(f"{n} frame(s) emptied - the drawings stay in the Level Strip" if n else "Select frames first")
+
+    def fr_clear_drawings(self):
+        """Shift+Del: the drawings shown in the selected frames (on every selected layer) are emptied - the frames keep their exposure."""
+        n = 0
+        for L, runs in self.fr_runs():
+            ids = {L.phase_key(f) for a, b in runs for f in range(a, b + 1)}
+            for did in ids:
+                if did >= 0 and L._pitems.get(did):
+                    L._pitems[did] = []
+                    n += 1
+        self.sel = [s for s in self.sel if not s.owner]
+        self.msg(f"{n} drawing(s) emptied (their frames stay)" if n else "Nothing to clear in the selected frames")
 
     def fr_copy(self, cut=False):
         runs = self.fr_runs()
@@ -1234,17 +1346,19 @@ class AppBase:
         self.msg(f"Pasted {len(new)} frame(s) at frame {self.frame}")
 
     def fr_shift(self, step):
+        """Selected frames take the previous / next drawing of the Level Strip, round and round."""
         n = 0
         for L, runs in self.fr_runs():
             order = L.dorder
+            if len(order) < 2:
+                continue
             for a, b in runs:
                 cur = L.phase_key(a)
-                j = (order.index(cur) if cur in order else (0 if step > 0 else len(order))) + step
-                if 0 <= j < len(order):
-                    self.expose_range(L, a, b, order[j])
-                    n += b - a + 1
+                j = (order.index(cur) + step) % len(order) if cur in order else (0 if step > 0 else len(order) - 1)
+                self.expose_range(L, a, b, order[j])
+                n += b - a + 1
         self.sel = [s for s in self.sel if not s.owner]
-        self.msg(f"{n} frame(s) now show the {'next' if step > 0 else 'previous'} drawing" if n else "There is no further drawing in that direction")
+        self.msg(f"{n} frame(s) now show the {'next' if step > 0 else 'previous'} drawing" if n else "The layer has only one drawing - draw another one first")
 
     def substitute(self, step):
         """Q / W: swap the drawing shown at the playhead (or in the selected frames) for the previous / next one from the Level Strip.
@@ -1292,6 +1406,7 @@ class AppBase:
 
     def place_drawing(self, o, f, did):                      # show an existing drawing from frame f on
         o.expose(int(clamp(f, 1, self.total)), did)
+        o.normalize()
 
     def phase_duplicate(self, o, did):
         new = o.new_drawing(self.clone_items(o, o._pitems.get(did, [])), after=did)
@@ -1645,42 +1760,60 @@ class AppBase:
 
     # ------------------------------------------------- rigging helpers (Tahoma / Duik style)
     def rebuild_drive(self, o):
-        for a in ("x", "y"):
-            if o.drivers:
-                o.expr[a] = "value" + "".join(f' + layer("{d["src"]}", {d["lag"]}).l{a} * {d["k"]:g}' for d in o.drivers)
+        """Expressions for everything an object follows: each driver sends one controller / slider into Position, Scale, Rotation or Opacity."""
+        for q in ("x", "y", "scale", "rotation", "opacity"):
+            o.expr.pop(q, None)
+            self.expr_bad.discard((o.name, q))
+        terms = {q: "" for q in ("x", "y", "scale", "rotation", "opacity")}
+        for d in o.drivers:
+            prop = d.get("prop", "pos")
+            src = self.find(d["src"])
+            ax = "y" if (src is not None and src.limit and src.limit[3] > src.limit[2] and not src.limit[1] > src.limit[0]) else "x"
+            if prop == "pos":
+                for a in ("x", "y"):
+                    terms[a] += f' + layer("{d["src"]}", {d["lag"]}).l{a} * {d["k"]:g}'
             else:
-                o.expr.pop(a, None)
-            self.expr_bad.discard((o.name, a))
+                terms[prop] += f' + layer("{d["src"]}", {d["lag"]}).l{ax} * {d["k"]:g}'
+        for q, t in terms.items():
+            if t:
+                o.expr[q] = "value" + t
 
-    def drive_by(self, o, src, k, lag=0):
+    def drive_by(self, o, src, k, lag=0, prop="pos"):
         """An object may follow several controllers at once; the offsets add up. lag = delay in frames."""
-        d = next((d for d in o.drivers if d["src"] == src), None)
+        d = next((d for d in o.drivers if d["src"] == src and d.get("prop", "pos") == prop), None)
         if d:
             d["k"], d["lag"] = k, lag
         else:
-            o.drivers.append({"src": src, "k": k, "lag": lag})
+            o.drivers.append({"src": src, "k": k, "lag": lag, "prop": prop})
         self.rebuild_drive(o)
-        self.msg(f"{o.name} follows {src}: x {k:g}, {lag} frame delay ({len(o.drivers)} controller(s))")
+        self.msg(f"{o.name} follows {src}: x {k:g}, {lag} frame delay ({len(o.drivers)} link(s))")
 
     def drive_menu(self, o, pos):
+        """Choose what it drives (position, scale, rotation, opacity) -> the controller or slider -> multiplier -> delay."""
         srcs = [x for x in self.objs if x is not o and (x.limit or x.kind.startswith("ctrl") or x.kind in ("null", "peg"))][:14]
         if not srcs:
-            self.msg("Create a joystick, controller, null or peg first")
+            self.msg("Create a joystick, slider, controller, null or peg first")
             return
-        cur = {d["src"]: d for d in o.drivers}
+        MULT = {"pos": (1, 0.75, 0.5, 0.25, -0.25, -0.5, -1), "scale": (0.01, 0.005, 0.0025, -0.0025, -0.005, -0.01),
+                "rotation": (1, 0.5, 0.25, 0.1, -0.1, -0.25, -0.5, -1), "opacity": (1, 0.5, 0.25, -0.25, -0.5, -1)}
+        NAME = {"pos": "Position", "scale": "Scale", "rotation": "Rotation", "opacity": "Opacity"}
 
-        def pick_lag(src, k):
-            have = cur.get(src.name)
-            self.ctx = {"pos": pos, "items": [(f"delay {n} frames", (lambda n=n: self.drive_by(o, src.name, k, n)), None,
+        def pick_lag(prop, src, k):
+            have = next((d for d in o.drivers if d["src"] == src.name and d.get("prop", "pos") == prop), None)
+            self.ctx = {"pos": pos, "items": [(f"delay {n} frames", (lambda n=n: self.drive_by(o, src.name, k, n, prop)), None,
                                               bool(have) and have["lag"] == n and have["k"] == k) for n in (0, 2, 4, 6, 8, 12)]}
 
-        def pick_k(src):
-            have = cur.get(src.name)
-            self.ctx = {"pos": pos, "items": [(f"{src.name}  x {k:g}", (lambda k=k: pick_lag(src, k)), None, bool(have) and have["k"] == k)
-                                              for k in (1, 0.75, 0.5, 0.25, -0.25, -0.5, -1)]}
-        self.ctx = {"pos": pos, "items": [(x.name + (f"   x {cur[x.name]['k']:g}, {cur[x.name]['lag']}f" if x.name in cur else ""),
-                                          (lambda x=x: pick_k(x)), None, x.name in cur) for x in srcs] +
-                    [("Stop following (all)", lambda: (o.drivers.clear(), self.rebuild_drive(o)))]}
+        def pick_k(prop, src):
+            have = next((d for d in o.drivers if d["src"] == src.name and d.get("prop", "pos") == prop), None)
+            self.ctx = {"pos": pos, "items": [(f"{src.name}  x {k:g}", (lambda k=k: pick_lag(prop, src, k)), None, bool(have) and have["k"] == k)
+                                              for k in MULT[prop]]}
+
+        def pick_src(prop):
+            cur = {d["src"]: d for d in o.drivers if d.get("prop", "pos") == prop}
+            self.ctx = {"pos": pos, "items": [(x.name + (f"   x {cur[x.name]['k']:g}, {cur[x.name]['lag']}f" if x.name in cur else ""),
+                                              (lambda x=x: pick_k(prop, x)), None, x.name in cur) for x in srcs] +
+                        [("Stop following (all)", lambda: (o.drivers.clear(), self.rebuild_drive(o)))]}
+        self.ctx = {"pos": pos, "items": [(n, (lambda p=p: pick_src(p)), None, any(d.get("prop", "pos") == p for d in o.drivers)) for p, n in NAME.items()]}
 
     def make_bone(self, start, end, name):
         o = self.new_obj("bone", start[0], start[1], w=1, h=8, select=False)
@@ -1793,9 +1926,7 @@ class AppBase:
         if not self.sel:
             self.msg("Select a layer first")
             return
-        for o in self.sel:
-            if o.owner:
-                continue
+        for o in dict.fromkeys(s.owner or s for s in self.sel):               # a shape inside a layer stands for its layer
             if o.expanded and o.u_props == set(props) and not add:
                 o.expanded, o.u_props = False, None
             else:
@@ -1844,6 +1975,22 @@ class AppBase:
         self.render_dlg = {"name": self.project_name, "fmt": 0, "range": 0,
                            "path": os.path.join(self.project_dir or "", "renders")}
 
+    def render_frame(self, f):
+        """A final frame. With motion blur: the average of several moments spread over the shutter."""
+        n = int(self.mblur)
+        if n <= 1:
+            return self.render_surface(f)
+        frac = clamp(self.mblur_shutter, 1, 720) / 360.0
+        acc = None
+        for k in range(n):
+            s = self.render_surface(f + (k / (n - 1) - 0.5) * frac)
+            if acc is None:
+                acc = s
+            else:
+                s.set_alpha(int(255 / (k + 1)))                              # a running average
+                acc.blit(s, (0, 0))
+        return acc
+
     def render_surface(self, f):
         surf = pygame.Surface((self.aw, self.ah))
         surf.fill(self.art_color)
@@ -1851,9 +1998,10 @@ class AppBase:
         try:
             self.screen, self.zoom, self.ox, self.oy, self.frame = surf, 1.0, 0.0, 0.0, f
             src = self.matte_sources()
+            hid = self.masked_desc_ids()
             for o in reversed(self.objs):
-                if self.eff_visible(o) and o.render and not o.kind.startswith("ctrl") and o.kind not in ("null", "peg", "bone", "pill", "rsquare") \
-                        and not o.limit and o.name not in src and self.in_range(o, f):
+                if self.eff_visible(o) and o.render and not o.kind.startswith("ctrl") and (o.kind not in ("null", "peg", "bone", "pill", "rsquare") or (o.matte and o.kind in ("null", "peg"))) \
+                        and not o.limit and o.name not in src and id(o) not in hid and self.in_range(o, f):
                     self.draw_layer(o, f)
         finally:
             self.screen, self.zoom, self.ox, self.oy, self.frame = saved
@@ -1861,6 +2009,7 @@ class AppBase:
 
     def run_render(self, mx=0, my=0):
         d = self.render_dlg
+        self.mblur, self.mblur_shutter = int(d.get("mblur", 1)), float(d.get("shutter", 180))
         lo, hi = (1, self.total) if d["range"] == 0 else (self.work_in or 1, min(self.work_out or self.total, self.total))
         name = re.sub(r'[\\/:*?"<>|]+', "_", d["name"].strip()) or "render"
         out_dir = d["path"].strip() or os.path.join(self.project_dir or ".", "renders")
@@ -1882,7 +2031,7 @@ class AppBase:
             for i, f in enumerate(range(lo, hi + 1)):
                 pygame.event.pump()
                 self.rend_prog = (i, n)
-                surf = self.render_surface(f)
+                surf = self.render_frame(f)
                 if proc:
                     proc.stdin.write(pygame.image.tostring(surf, "RGB"))
                 else:
@@ -2926,9 +3075,12 @@ class AppBase:
         elif k in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET) and (mods & pygame.KMOD_ALT):
             self.trim_at_playhead(k == pygame.K_RIGHTBRACKET)        # Alt+[ keeps the part right of the playhead, Alt+] the part left of it
         elif k in (pygame.K_DELETE, pygame.K_BACKSPACE) and self.frame_mode and self.fr_sel and self.r_tl.collidepoint(pos):
-            self.fr_delete()
+            self.fr_clear_drawings() if (mods & pygame.KMOD_SHIFT) else self.fr_delete()     # Del = holes, Shift+Del = empty the drawings
         elif k == pygame.K_x and ctrl and self.frame_mode and self.fr_sel and self.r_tl.collidepoint(pos):
             self.fr_copy(cut=True)
+        elif k == pygame.K_ESCAPE and (self.ease_pop or self.jwiz):
+            self.ease_pop = None
+            self.jwiz = None
         elif k == pygame.K_ESCAPE and self.fr_sel:
             self.fr_sel = set()
         elif k in (pygame.K_DELETE, pygame.K_BACKSPACE) and self.workspace == "Drawing" and self.drawing_tab == "Level Strip" and self.r_aux.collidepoint(pos):
@@ -2987,8 +3139,10 @@ class AppBase:
             self.open_rename()
         elif ctrl and k == pygame.K_h and self.left_tab == "Footage" and self.foot_sel is not None:
             self.start_replace(self.foot_sel)
-        elif not ctrl and k in (pygame.K_p, pygame.K_r, pygame.K_t, pygame.K_s, pygame.K_e, pygame.K_l) \
-                and self.r_tl.collidepoint(pygame.mouse.get_pos()):               # property keys while the cursor is on the timeline
+        elif k == pygame.K_t and not ctrl and self.kf_sel and self.r_tl.collidepoint(pos):
+            self.ease_pop = {"pos": pos}                                # T on selected keyframes: pick a curve from small pictures
+        elif not ctrl and (k == pygame.K_p or (k in (pygame.K_r, pygame.K_t, pygame.K_s, pygame.K_e, pygame.K_l)
+                                               and self.r_tl.collidepoint(pygame.mouse.get_pos()))):      # P = Position values everywhere; R / T / S over the timeline
             m = {pygame.K_p: ("x", "y"), pygame.K_r: ("rotation",), pygame.K_t: ("opacity",), pygame.K_s: ("scale",)}
             if k in m:
                 self.toggle_props(m[k], bool(mods & pygame.KMOD_SHIFT))
@@ -3165,6 +3319,7 @@ class AppBase:
             self.safe(self.draw_splitters)
         self.safe(self.draw_ghosts)
         self.safe(self.draw_time_dlg)
+        self.safe(self.draw_ease_pop)
         self.draw_menu_bar()
         self.draw_bar()
         self.draw_toast(self.r_view if self.r_view.w else self.r_aux or self.r_view)

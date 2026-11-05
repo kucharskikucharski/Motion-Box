@@ -1018,9 +1018,14 @@ class CanvasMixin:
             return
         saved, size = self.screen, self.screen.get_size()
         la, ma = pygame.Surface(size, pygame.SRCALPHA), pygame.Surface(size, pygame.SRCALPHA)
+        members = [o]
+        if o.kind in ("null", "peg"):                                   # a group: every layer parented to it is masked together
+            ids = {id(d) for d in self.descendants(o) if self.eff_visible(d) and not self.is_controller(d) and d.kind not in ("null", "peg", "bone") and self.in_range(d, f)}
+            members += [d for d in reversed(self.objs) if id(d) in ids]
         try:
             self.screen = la
-            self.draw_tree(o, f)
+            for m_ in members:
+                self.draw_tree(m_, f)
             self.screen = ma
             self.draw_tree(mt, f)
         finally:
@@ -1201,12 +1206,24 @@ class CanvasMixin:
         ab = pygame.Rect(int(ax0), int(ay0), int(self.aw * self.zoom), int(self.ah * self.zoom))
         pygame.draw.rect(self.screen, self.art_color, ab)
         src = self.matte_sources()
-        for o in reversed(self.objs):
-            if self.eff_visible(o) and self.in_range(o) and o.name not in src and not (self.view["render"] and (not o.render or o.kind in ("null", "peg", "bone") or o.kind.startswith("ctrl") or self.is_controller(o))) and (self.rest_layer is None or o is self.rest_layer):
-                self.draw_layer(o)
-                if o.caption:                                  # slider / controller name above the object
-                    bp = self.box_pts(o, 6)
-                    self.txt(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - 16, self.f11, o.caption_color or (230, 230, 235), center=True)
+        q = max(1, int(self.preview_q))                              # preview quality: the scene is drawn in a smaller picture and enlarged (lighter for the computer)
+        real_screen, small = None, None
+        if q > 1:
+            real_screen, rz, rox, roy = self.screen, self.zoom, self.ox, self.oy
+            small = pygame.Surface((v.w // q + 2, v.h // q + 2), pygame.SRCALPHA)
+            self.screen, self.zoom, self.ox, self.oy = small, rz / q, (rox - v.x) / q, (roy - v.y) / q
+        try:
+            hid = self.masked_desc_ids()
+            for o in reversed(self.objs):
+                if id(o) not in hid and self.eff_visible(o) and self.in_range(o) and o.name not in src and not (self.view["render"] and (not o.render or o.kind in ("null", "peg", "bone") or o.kind.startswith("ctrl") or self.is_controller(o))) and (self.rest_layer is None or o is self.rest_layer):
+                    self.draw_layer(o)
+                    if o.caption:                                  # slider / controller name above the object
+                        bp = self.box_pts(o, 6)
+                        self.txt(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - 16, self.f11, o.caption_color or (230, 230, 235), center=True)
+        finally:
+            if real_screen is not None:
+                self.screen, self.zoom, self.ox, self.oy = real_screen, rz, rox, roy
+                real_screen.blit(pygame.transform.scale(small, (small.get_width() * q, small.get_height() * q)), v.topleft)
         if self.view.get("camera"):                                  # camera view: nothing outside the artboard
             vr = self.r_view
             for rc in (pygame.Rect(vr.x, vr.y, vr.w, ab.y - vr.y), pygame.Rect(vr.x, ab.bottom, vr.w, vr.bottom - ab.bottom),
@@ -1324,6 +1341,7 @@ class CanvasMixin:
             self.draw_animate_opts(v)
         elif self.tool in ("select", "transform"):
             self.draw_select_opts(v)
+        self.draw_jwiz(v)
         if self.rest_layer is not None:                              # drawing view banner
             self.rrect((v.x + 8, v.y + 8, 430, 34), (30, 30, 34), 17)
             self.txt(f"Drawing view: {self.rest_layer.name} (no rig, no animation)", v.x + 20, v.y + 17, self.f11)
@@ -1996,8 +2014,16 @@ class CanvasMixin:
             self.txt("Select a drawing layer to see its drawings.", x, y, self.f12, COLOR_MUTED)
             return y + 30
         self.txt(lyr.name, x, y, self.fb)
-        y += 24
         w = r.w - 2 * (x - r.x)
+        sk = self.find(lyr.phase_src) if lyr.phase_src else None
+        sb = pygame.Rect(x + w - 160, y - 4, 160, 24)                        # a slider can choose which drawing is shown
+        self.rrect(sb, COLOR_HOVER if self.hovering(sb) else COLOR_BTN, 12)
+        self.txt(("Slider: " + (sk.parent.name if (sk is not None and sk.parent) else sk.name)) if sk is not None else "Control with a slider", sb.x + 12, sb.y + 5, self.f11)
+        self.caret(sb.right - 14, sb.centery, (205, 205, 205))
+        self.hit(sb, lambda mx, my: self.phase_slider_menu(lyr, (mx, my)))
+        if self.hovering(sb):
+            self.hover_hint = "A slider chooses the drawing: moving it from one end to the other goes through ALL the drawings of this layer, in the order of the Level Strip"
+        y += 28
         if lyr.kind == "rlayer":
             self.txt("Raster layers keep one drawing for now.", x, y, self.f11, COLOR_MUTED)
             return y + 30

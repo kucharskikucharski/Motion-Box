@@ -193,3 +193,7 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - Slider: wybór, co steruje (pozycja, skala, rotacja, przezroczystość, fazy z Level Strip); samouczek tworzenia joysticka (Up / Down / Left / Right)
 - Alpha matte dla kilku rysunków naraz (maska na grupę)
 - Grupy w nodeach, gradient, narzędzie Text, Animate dla całych warstw i nulli
+
+## 03.11.2026
+- Zrobione: jakość podglądu, interpolacje pod T, slider steruje rysunkami, wybór co steruje (Drive by controller), samouczek joysticka, alfa matte na grupę, motion blur i podgląd w oknie renderu, kilka warstw naraz (wydłużanie, dziury, czyszczenie, podmiana)
+- Otwarte: grupy w nodeach, gradient, narzędzie Text, Animate dla całych warstw i nulli, wstawianie noda między Table a resztą

@@ -30,6 +30,20 @@
 - **Tytuł okna** ma "*", gdy są niezapisane zmiany.
 - **Nowe ikony** kłódki, oka i strzałek kursora (foldery `icons/ui` i `icons/cursors`).
 
+## Nowe w tej paczce (druga część)
+- **Kilka warstw naraz (np. dwie powieki):** zaznaczone klatki na wielu warstwach można razem wydłużać żółtymi krawędziami (reszta jedzie z nimi, z Ctrl nic się nie przesuwa), usuwać (Del robi dziury, Shift+Del czyści rysunki z zaznaczonych klatek) i podmieniać rysunki (Q / W).
+- **Q / W w pętli** - po ostatnim rysunku wracają do pierwszego, bez zatrzymywania; na zaznaczonych klatkach i bez zaznaczenia (wtedy działają na klatce z playheadem wszystkich zaznaczonych warstw).
+- **Dziury w warstwach** są widoczne na pasku warstwy; znacznik fazy (kreska i kropka) pojawia się tylko tam, gdzie naprawdę zaczyna się inny rysunek.
+- **Uchwyty obszaru roboczego** podświetlają się i oba (start i end) da się przeciągać.
+- **Jakość podglądu** (Full, 1/2, 1/4, 1/6) - lista obok zoomu pod viewerem; rysuje scenę w mniejszej rozdzielczości, żeby program działał lżej. Render zawsze w pełnej jakości.
+- **Interpolacje pod T** - przy zaznaczonych keyframe'ach okienko z miniaturami krzywych (Linear, Ease In / Out, mocne warianty, Hold).
+- **Slider steruje rysunkami:** w Level Strip przycisk "Control with a slider" - ruch slidera od końca do końca przechodzi przez wszystkie rysunki warstwy.
+- **Drive by controller** pyta najpierw, co ma sterować: Position, Scale, Rotation albo Opacity.
+- **Joystick setup** (Properties lub menu Object): prowadzi przez ustawienie pozycji Up, Down, Left, Right i tworzy powiązanie, które zatrzymuje ruch dokładnie na tych pozycjach.
+- **Alpha matte na grupę:** matta na pegu lub nullu maskuje razem wszystko, co jest do niego podpięte (np. białko, źrenica i rzęsy oka maskowane głową).
+- **Render:** podgląd klatki i pasek zakresu (all / work area), Motion Blur (próbki 4 / 8 / 16 i kąt migawki).
+- **P** pokazuje wartości Position wszędzie; narzędzie Pen ma skrót **G**.
+
 ## Poprawki
 - Kolor z toolboxu i palety nie przemalowuje już zaznaczonych obiektów (maluje Fill Bucket albo panel Properties).
 - Slidery i joysticki mają przezroczyste wypełnienie i grubszy kontur.

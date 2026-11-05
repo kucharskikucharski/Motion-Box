@@ -566,13 +566,14 @@ class PanelsMixin:
                                   {"hcenter": f"Centre horizontally on {to}", "vcenter": f"Centre vertically on {to}"}.get(kind, f"Align to the {kind} edge of {to}"))
             draw_arrange_icon(self.screen, kind, rc, (225, 225, 225))
         y += 2 * (bs + 6) + 6
-        if not o.owner and o.kind not in ("null", "peg", "bone") and not o.kind.startswith("ctrl"):
-            self.divider(x, y, w)                                # alpha matte (e.g. an eye shape that masks the pupil)
+        if not o.owner and o.kind not in ("bone",) and not o.kind.startswith("ctrl") and not o.limit:
+            self.divider(x, y, w)                                # alpha matte (e.g. an eye shape that masks the pupil); on a peg / null it masks everything under it
             y += 12
             self.heading(x, y, "Track matte", "alpha")
             y += 28
-            self.button((x, y, w - 72, 32), (o.matte or "None") + "  v", lambda mx, my: self.matte_menu(o, (mx, my)), radius=8,
-                        hint="Show this layer only where another layer is opaque (alpha matte)")
+            self.button((x, y, w - 72, 32), (o.matte or "None"), lambda mx, my: self.matte_menu(o, (mx, my)), radius=8,
+                        hint="Show this layer only where another layer is opaque (alpha matte). On a peg or null: everything parented to it is masked together")
+            self.caret(x + w - 72 - 16, y + 16, (205, 205, 205))
             self.button((x + w - 64, y, 64, 32), "Invert", lambda mx, my: setattr(o, "matte_inv", not o.matte_inv),
                         active=o.matte_inv, radius=8, hint="Use the opposite of the matte (show where it is transparent)")
             y += 40
@@ -582,6 +583,10 @@ class PanelsMixin:
                 self.txt("Show the matte layer too", x + 28, y + 4)
                 y += 32
             y += 4
+        if o.limit or (o.kind in ("pill", "rsquare") and any(c.parent is o and c.limit for c in self.objs)):
+            self.button((x, y, w, 32), "Joystick setup...", lambda mx, my: self.jwiz_start(),
+                        radius=8, hint="A short guide: you move an object to its Up, Down, Left and Right extremes and the joystick follows them exactly")
+            y += 44
         if not o.owner and not o.kind.startswith("ctrl") and not self.is_joy(o):
             self.button((x, y, w, 32), "Drive by controller...", lambda mx, my, o=o: self.drive_menu(o, (mx, my)), radius=8,
                         hint="Make this layer follow a joystick / controller; a negative multiplier moves the opposite way (pseudo 3D)")
@@ -896,6 +901,14 @@ class PanelsMixin:
         r = self.r_trans
         self.rrect(r, (46, 46, 50), 12)
         self.txt(f"F {self.frame} / {self.total}   {self.frame / self.fps:.2f}s", r.x + 16, r.centery - 7)
+        qb = pygame.Rect(r.right - 204, r.centery - 14, 92, 28)                     # preview quality: lighter for a slow computer
+        self.rrect(qb, COLOR_HOVER if self.hovering(qb) else COLOR_BTN, 14)
+        self.txt({1: "Full", 2: "1/2", 4: "1/4", 6: "1/6"}.get(self.preview_q, "Full"), qb.x + 14, qb.centery - 7, self.f11)
+        self.caret(qb.right - 18, qb.centery, (205, 205, 205))
+        self.hit(qb, lambda mx, my: setattr(self, "ctx", {"pos": (qb.x, qb.y - 8), "items": [
+            (n, (lambda q=q: setattr(self, "preview_q", q)), None, self.preview_q == q) for q, n in ((1, "Full"), (2, "1/2"), (4, "1/4"), (6, "1/6"))]}))
+        if self.hovering(qb):
+            self.hover_hint = "Preview quality: 1/2, 1/4 or 1/6 draw the scene smaller and enlarge it - the program runs lighter. Rendering is always full quality"
         zb = pygame.Rect(r.right - 104, r.centery - 14, 92, 28)                     # zoom: a drop-down with the scale and Fit
         self.rrect(zb, COLOR_HOVER if self.hovering(zb) else COLOR_BTN, 14)
         self.txt(f"{int(round(self.zoom * 100))}%", zb.x + 14, zb.centery - 7, self.f11)
@@ -973,6 +986,7 @@ class PanelsMixin:
                        ("Reset Anchor Point", self.reset_anchor, "", None),
                        ("Generate Body Drawing Layers", self.generate_body_layers, "", None),
                        ("Do the Rig", self.do_rig, "", None),
+                       ("Joystick Setup...", self.jwiz_start, "", None),
                        ("Edit Drawing without the Rig", self.enter_rest_edit, "", None),
                        ("Create Skeleton from Selection", self.skeleton_from_selection, "", None), None,
                        ("Group", self.group_selected, "Ctrl+G", None), ("Ungroup", self.ungroup_selected, "", None),
@@ -1158,6 +1172,63 @@ class PanelsMixin:
                     lambda mx, my: (setattr(self, "seq_dlg", None), self.import_footage(d["path"], as_seq=d["as_seq"])),
                     color=COLOR_ACCENT_L, radius=18, font=self.fb)
 
+    def draw_ease_pop(self):
+        p = self.ease_pop
+        if not p:
+            return
+        cols, cw_, ch_ = 4, 84, 78
+        rows = (len(EASE_PRESETS) + cols - 1) // cols
+        box = pygame.Rect(0, 0, cols * cw_ + 24, rows * ch_ + 56)
+        box.center = (self.W // 2, self.H // 2)
+        self.hit((0, 0, self.W, self.H), lambda mx, my: setattr(self, "ease_pop", None))
+        self.rrect(box, (32, 34, 40), 16)
+        self.rrect(box, (70, 70, 78), 16, 1)
+        self.hit(box, lambda mx, my: None)
+        self.txt("Interpolation of the selected keyframes", box.x + 14, box.y + 14, self.f12)
+        for i, (name, e) in enumerate(EASE_PRESETS):
+            cell = pygame.Rect(box.x + 12 + (i % cols) * cw_, box.y + 44 + (i // cols) * ch_, cw_ - 6, ch_ - 6)
+            self.rrect(cell, COLOR_HOVER if self.hovering(cell) else COLOR_BTN, 10)
+            g = pygame.Rect(cell.x + 10, cell.y + 8, cell.w - 20, cell.h - 32)           # the curve, drawn small
+            pygame.draw.rect(self.screen, (60, 62, 70), g, 1, border_radius=4)
+            if e[2]:                                                                 # hold: a step
+                pts = [(g.x, g.bottom), (g.centerx, g.bottom), (g.centerx, g.y), (g.right, g.y)]
+            else:
+                pts = [(g.x + t * g.w, g.bottom - ease_t(t, e) * g.h) for t in [i_ / 20 for i_ in range(21)]]
+            pygame.draw.lines(self.screen, (235, 235, 240), False, pts, 2)
+            self.txt(name, cell.centerx, cell.bottom - 14, self.f11, COLOR_MUTED, center=True)
+            self.hit(cell, lambda mx, my, e=e: self.apply_ease(e))
+
+    def draw_jwiz(self, v):
+        w = self.jwiz
+        if not w:
+            return
+        kn = self.find(w["knob"])
+        tgt = w["target"]
+        st = w["step"]
+        bar = pygame.Rect(v.x + 24, v.y + 52, min(v.w - 48, 640), 70)
+        self.rrect(bar, (30, 30, 34), 18)
+        self.rrect(bar, (80, 120, 230), 18, 2)
+        if st == 0:
+            msg = "Joystick setup 1/6: click the object that the joystick should move, then press Next"
+        elif st <= 4:
+            dn = self.JWIZ_STEPS[st - 1][1]
+            msg = f"Joystick setup {st + 1}/6: move {tgt} to its {dn} position, then press Set (Skip if it does not move that way)"
+        else:
+            msg = f"Joystick setup 6/6: {tgt} will follow {w['knob']} between the positions you set"
+        self.txt(msg, bar.x + 18, bar.y + 12, self.f12)
+        bx = bar.x + 18
+        if st == 0:
+            self.button((bx, bar.y + 34, 90, 28), "Next", lambda mx, my: self.jwiz_next(), color=COLOR_ACCENT_L, radius=14, font=self.f11)
+            bx += 98
+        elif st <= 4:
+            self.button((bx, bar.y + 34, 90, 28), "Set", lambda mx, my: self.jwiz_set(), color=COLOR_ACCENT_L, radius=14, font=self.f11)
+            self.button((bx + 98, bar.y + 34, 90, 28), "Skip", lambda mx, my: w.__setitem__("step", st + 1), radius=14, font=self.f11)
+            bx += 196
+        else:
+            self.button((bx, bar.y + 34, 200, 28), "Create joystick setup", lambda mx, my: self.jwiz_create(), color=COLOR_ACCENT_L, radius=14, font=self.f11)
+            bx += 208
+        self.button((bar.right - 106, bar.y + 34, 90, 28), "Cancel", lambda mx, my: setattr(self, "jwiz", None), radius=14, font=self.f11)
+
     def draw_time_dlg(self):
         d = self.tdlg
         if not d:
@@ -1227,7 +1298,7 @@ class PanelsMixin:
         d = self.render_dlg
         if not d or self.rend_prog:
             return
-        box = pygame.Rect(0, 0, 560, 400)
+        box = pygame.Rect(0, 0, 560, min(self.H - 20, 700))
         box.center = (self.W // 2, self.H // 2)
         self.hit((0, 0, self.W, self.H), lambda mx, my: setattr(self, "render_dlg", None))
         self.rrect(box, (32, 34, 40), 16)
@@ -1251,12 +1322,41 @@ class PanelsMixin:
         self.txt("Path", x, y + 9)
         self.field((fx, y, fw, 32), d["path"], lambda s: d.__setitem__("path", s), "rd_path")
         y += 48
+        self.txt("Motion blur", x, y + 9)                                 # the first effect: several moments inside the shutter are averaged
+        for i, n in enumerate((1, 4, 8, 16)):
+            self.button((fx + i * 52, y, 48, 32), "Off" if n == 1 else str(n), lambda mx, my, n=n: d.__setitem__("mblur", n),
+                        active=int(d.get("mblur", 1)) == n, radius=16, font=self.f11, hint="How many moments are blended for every frame (more = smoother, slower)")
+        self.txt("Shutter", fx + 4 * 52 + 14, y + 9, self.f11, COLOR_MUTED)
+        self.field((fx + 4 * 52 + 70, y, 64, 32), f"{int(d.get('shutter', 180))}", lambda v: d.__setitem__("shutter", int(clamp(v, 1, 720))), "rd_shutter", numeric=True,
+                   hint="Shutter angle in degrees: 180 = the shutter is open for half of a frame")
+        y += 48
         ff = self.ffmpeg_path()
         self.txt("ffmpeg found - H.264 is ready." if ff else "ffmpeg not found: install it (sudo apt install ffmpeg) for H.264;",
                  fx, y, self.f11, (120, 200, 140) if ff else COLOR_YELLOW)
         if not ff:
             self.txt("until then the render is saved as a PNG sequence.", fx, y + 18, self.f11, COLOR_YELLOW)
         self.txt(f"{self.aw} x {self.ah}, {self.fps} fps, nulls / controllers / bones / pegs are not rendered", fx, y + 40, self.f11, COLOR_MUTED)
+        y += 66
+        pw = box.w - 48                                                   # a picture of the current frame and the range that will be rendered
+        if "thumb" not in d:
+            ph = int(min(170, pw * self.ah / self.aw))
+            pw2 = int(ph * self.aw / self.ah)
+            d["thumb"] = pygame.transform.smoothscale(self.render_surface(self.frame), (max(2, pw2), max(2, ph)))
+        th = d["thumb"]
+        tr = th.get_rect(midtop=(box.centerx, y))
+        self.rrect(tr.inflate(8, 8), (20, 20, 24), 8)
+        self.screen.blit(th, tr)
+        y = tr.bottom + 14
+        lo, hi = (1, self.total) if d["range"] == 0 else ((self.work_in or 1), (self.work_out or self.total))
+        track = pygame.Rect(x, y, pw, 20)
+        self.rrect(track, (46, 46, 50), 6)
+        a_ = track.x + int(track.w * (lo - 1) / max(1, self.total))
+        b_ = track.x + int(track.w * hi / max(1, self.total))
+        self.rrect((a_, track.y, max(6, b_ - a_), track.h), COLOR_ACCENT_L, 6)
+        px_ = track.x + int(track.w * (self.frame - 0.5) / max(1, self.total))
+        pygame.draw.line(self.screen, (255, 255, 255), (px_, track.y - 3), (px_, track.bottom + 3), 2)
+        n_ = hi - lo + 1
+        self.txt(f"{'Whole timeline' if d['range'] == 0 else 'Work area'}: frames {lo} - {hi}  ({n_} frames, {n_ / self.fps:.1f} s)", x, track.bottom + 8, self.f11, COLOR_MUTED)
         self.button((box.right - 24 - 120, box.bottom - 24 - 36, 120, 36), "Render", self.run_render, color=COLOR_ACCENT_L, radius=18, font=self.fb)
         self.button((box.right - 24 - 120 - 112, box.bottom - 24 - 36, 100, 36), "Cancel", lambda mx, my: setattr(self, "render_dlg", None), radius=18)
 
