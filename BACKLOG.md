@@ -119,3 +119,81 @@ Pytania do wyjaśnienia (opisane w rozmowie): mnożniki przez ekspresje (Drive b
 - Rect i Lasso dla Fill bucket, Pen, Text, Taper, Lipsync, Artboard, Multiline, IK: placeholdery
 - Raster: bez cofania (Ctrl+Z nie obejmuje pikseli), bez wiaderka
 - Ponowny import tego samego pliku tworzy duplikat
+
+## Z ostatniej rundy (do zrobienia)
+- [ ] Zaznaczanie klatek na warstwie (Shift + klik: zakres), przenoszenie zaznaczenia (czerwone = zakaz upuszczenia na warstwę z rysunkami), wytnij / wklej / podmień / usuń klatki
+- [ ] Przeciąganie phase'ów z Level Strip na timeline (wstawianie lub podmiana, także na zaznaczony zakres klatek)
+- [ ] Tryb izolacji po kliknięciu miniatury w Level Strip (odtwarzanie, rysowanie z onion skin)
+- [ ] Toolbox budowany przez przeciąganie ikon (Preferences > Tools): na razie lista narzędzi z nazwami
+- [x] Preferences w działach (General, Interface, Labels, Tools, Preview, Onion Skin) + Search
+- [x] Properties: miniatura warstwy, mniejszy przycisk Link to Parent
+- [x] Kopiuj / wklej: kopia w tej samej warstwie +10 px, w innej warstwie w tym samym miejscu, zawsze osobny obiekt
+- [x] Strzałki przesuwają zaznaczenie o 1 px (Shift 10); po kliknięciu timeline sterują playheadem
+- [x] Rename wielu warstw (Ctrl+R): zastąp + sufiks (_# = numer kolejny)
+- [x] Ikony narzędzi w stanach Default / Hover / Active (np. select_default.png, select_hover.png, select_active.png)
+- [x] Splash: animowany status znajdowany automatycznie przy kropce (lewy dolny róg także)
+- [x] Znacznik "a" na warstwie, która jest alfą innej; opcja "Show the matte layer too"
+
+## Zgłoszone przez użytkownika, jeszcze do zrobienia (stan: 28.10.2026)
+- Kości: Edit Skeleton (przesuwanie początków/końców, magnes do anchorów i końców innych kości), limit kąta zgięcia + łuk, widok kości jako kropki, "Show only active skeleton", szkielet humanoidalny jednym kliknięciem
+- IK: kierunek zgięcia jako wartość skokowa (keyframe bez przejść) + wygodniejsze tworzenie (baner z krokami)
+- Timeline: zaznaczanie pojedynczych klatek (Shift = wiele warstw), przesuwanie/usuwanie, zmiana fazy klawiszami W/Q, strzałki góra/dół przy warstwie z wieloma fazami, wyszukiwarka + filtr typu, przesuwana szerokość kolumny z nazwami, skracanie wielu warstw naraz
+- Level Strip: pierwszy rysunek od razu na liście, rysowanie na pustej klatce tworzy nową fazę, przeciąganie faz na puste klatki (zajęte zablokowane)
+- Selekcja: filtr Select (rysunki / pegi / nulle), zaznaczanie tekstu myszą w polach
+- Schematic: wstawianie node'a na połączenie, zmiana nazwy dwuklikiem, podświetlenie warstwy po najechaniu na node
+- Grupy: tryb izolacji (dwuklik w grupę, Esc), prawdziwy Precompose
+- Joystick: zakres ruchu z czterech keyframe'ów (jak w After Effects)
+- Paleta: foldery i nazwy kolorów
+- Menu skrótów z wizualizacją klawiatury
+- Ikony: brakuje Transform, Peg, Edit Skeleton, Animate; Gradient czeka na narzędzie
+
+## Dodane 28.10.2026 (wieczór), jeszcze otwarte
+- Library: miniatury z prawdziwą zawartością, foldery, przeciąganie w obie strony (do biblioteki i ze sceny)
+- Nodey: grupa jako ramka z zachowaną hierarchią, rozwijana z menu podręcznego, kolor ramki i miniatura; czcionki i plugi skalowane razem z zoomem widoku
+- Zegarek przy wartościach jest też w panelu Properties (na razie tylko na timeline)
+- Timeline: właściwości wartości pokazują się klawiszami P / R / S / T / U; warto dodać prawy klik "Pokaż właściwości" i wspólny wiersz "Transform"
+
+## Zgłoszone 29.10.2026, jeszcze otwarte
+- Pozycja X i Y jako jedna wartość "Position" z opcją rozdzielenia (prawy klik)
+- Faza (rysunek) sterowana sliderem - wymaga modelu rysunków/faz (cels) i Level Stripa
+- Paleta: foldery, nazwy kolorów, trzy widoki (kółka / kafelki z nazwą / lista)
+- Library i Footage: zaznaczanie wielu elementów, przeciąganie między timeline / viewerem a biblioteką
+- Zaznaczanie tekstu myszą w polach tekstowych
+- Gradient (narzędzie albo opcja w kolorach)
+
+## Zgłoszone 30.10.2026, jeszcze otwarte
+- Zaznaczanie klatek na warstwie (pojedynczych, kilku, Shift) z przesuwaniem / usuwaniem / wycinaniem / wklejaniem i zmianą fazy klawiszami W / Q
+- Level Strip: zaznaczanie fazy prostokątem; panel Library z takim samym podglądem i odtwarzaniem
+- Rysowanie na pustej klatce samo tworzy nową fazę; warstwy rastrowe z wieloma fazami
+- Select: wspólny bounding box wielu zaznaczonych obiektów (skala, pozycja, rotacja); Animate: ikona rombu, animacja całych warstw i nulli
+- Nody: wstawianie noda między Table a pozostałe
+- Narzędzie Text
+
+## Zrobione 30.10.2026 (podczas nieobecności użytkownika)
+- Library: prawdziwe miniatury, zaznaczanie wielu (Shift / Ctrl), foldery, przeciąganie z biblioteki do viewera / timeline i z timeline / viewera do biblioteki
+- Footage: zaznaczanie wielu, przeciąganie na scenę
+- Explorer: zaznaczanie wielu plików, "Import selected", opcja "Import numbered files as a sequence"
+- Paleta: nazwy kolorów, foldery, trzy widoki (kółka / kafelki z nazwą / lista)
+
+## Nadal otwarte
+- Zaznaczanie klatek na warstwie (move / delete / cut / paste, W / Q), pozycja X i Y jako jedna wartość z opcją rozdzielenia, zaznaczanie tekstu myszą, gradient, narzędzie Text, grupy w nodeach
+
+## 30.10.2026 wieczór
+- Zrobione: "+" tworzy od razu warstwę wektorową (bez okna wyboru), wyszukiwarka warstw na timeline z filtrem typu, centrowanie w poziomie i w pionie w Align, zakładki Colors / Level Strip z własnym przewijaniem i stałym kołem barw, placeholder ikony Animate
+- Otwarte: zaznaczanie klatek na warstwie (przesuwanie / usuwanie / wycinanie / wklejanie, W / Q), szkic zakładki Color Palette do porównania (nie dotarł)
+
+## 31.10.2026
+- Zrobione: jeden przycisk "+" (Drawing / Peg / Null), listy rozwijane z zaokrąglonym trójkątem, [ ] = work area (I = eyedropper), Ctrl+0 i lista zoomu pod viewerem, ogólne oko i kłódka nad warstwami, brush: grubość i kolor linii na żywo + smoothing, onion skin z grubością rysunku i miękką plamą, lewa strzałka = wartości do animacji (dzieci składane po prawej od nazwy), opcja "Only this layer" w Select i Animate
+- Otwarte: zaznaczanie klatek na warstwie (move / delete / cut / paste, W / Q), pozycja X i Y jako jedna wartość, zaznaczanie tekstu myszą, gradient, Text
+
+## 01.11.2026 - zgłoszone, jeszcze otwarte
+- Jakość podglądu (Full / 1/2 / 1/4 / 1/6) jako lista obok zoomu pod viewerem
+- Interpolacje: klawisz T przy zaznaczonych keyframe'ach otwiera okienko z miniaturami krzywych
+- Okno renderu: podgląd z paskiem timeline (all / work area); Motion Blur jako opcja renderu
+- Slider: wybór, co steruje (pozycja, skala, rotacja, przezroczystość, fazy z Level Strip); samouczek tworzenia joysticka (Up / Down / Left / Right)
+- Alpha matte dla kilku rysunków naraz (maska na grupę)
+- Grupy w nodeach, gradient, narzędzie Text, Animate dla całych warstw i nulli
+
+## 03.11.2026
+- Zrobione: jakość podglądu, interpolacje pod T, slider steruje rysunkami, wybór co steruje (Drive by controller), samouczek joysticka, alfa matte na grupę, motion blur i podgląd w oknie renderu, kilka warstw naraz (wydłużanie, dziury, czyszczenie, podmiana)
+- Otwarte: grupy w nodeach, gradient, narzędzie Text, Animate dla całych warstw i nulli, wstawianie noda między Table a resztą
