@@ -1439,18 +1439,18 @@ class CanvasMixin:
                 if all(abs(x - tx) >= 196 or abs(y - ty) >= 100 for tx, ty in taken):
                     o.node = [x, y]
                     break
-        # Zoom moves node positions, while their screen size and labels stay readable.
+        # A schematic zoom scales the graph geometry as one unit.
         return pygame.Rect(int(r.x + self.nd_ox + o.node[0] * z), int(r.y + self.nd_oy + o.node[1] * z),
-                           150 if self.is_pill(o) else 168,
-                           30 if self.is_pill(o) else (112 if o.node_open else 56))
+                           max(1, int((150 if self.is_pill(o) else 168) * z)),
+                           max(1, int((30 if self.is_pill(o) else (112 if o.node_open else 56)) * z)))
 
     def is_pill(self, o):
         return o.kind in ("peg", "null", "bone") or o.kind.startswith("ctrl")
 
     def port_y(self, nr):
-        if nr.h <= 34:                                         # a pill: ports in the middle
+        if nr.h <= int(34 * self.nd_zoom):                    # a pill: ports in the middle
             return nr.centery
-        return nr.y + 18
+        return nr.y + int(36 * self.nd_zoom)
 
     def nd_wheel(self, dy, pos):
         r, z0 = self.r_aux, self.nd_zoom
@@ -1535,7 +1535,7 @@ class CanvasMixin:
                     def lm(mx, my):
                         self.link_mouse = (mx, my)
                     return lm
-            tg = pygame.Rect(nr.right - 26, nr.y + 2, 22, 20)
+            tg = pygame.Rect(nr.right - int(26 * z), nr.y + int(2 * z), max(1, int(22 * z)), max(1, int(20 * z)))
             if tg.collidepoint(mx, my):
                 o.node_open = not o.node_open
                 return
@@ -1652,9 +1652,8 @@ class CanvasMixin:
             return
         xs, ys = [o.node[0] for o in self.objs] + [-240], [o.node[1] for o in self.objs]
         bw, bh = max(xs) + 176 - min(xs), max(ys) + 120 - min(ys)
-        # Keep a useful minimum zoom. Large graphs can be panned instead of
-        # shrinking their nodes and text into an unreadable pile.
-        z = clamp(min((r.w - 64) / bw, (r.h - 136) / bh), 0.35, 1.0)
+        # Fit the whole graph when possible; smaller views remain available by zooming out.
+        z = clamp(min((r.w - 64) / bw, (r.h - 136) / bh), 0.05, 1.5)
         self.nd_zoom = z
         self.nd_ox = (r.w - bw * z) / 2 - min(xs) * z
         self.nd_oy = 72 + ((r.h - 136) - bh * z) / 2 - min(ys) * z
@@ -1707,10 +1706,11 @@ class CanvasMixin:
 
     def table_rect(self):
         r, z = self.r_aux, self.nd_zoom
-        return pygame.Rect(int(r.x + self.nd_ox - 240 * z), int(r.y + self.nd_oy + 64 * z), 168, 56)
+        return pygame.Rect(int(r.x + self.nd_ox - 240 * z), int(r.y + self.nd_oy + 64 * z),
+                           max(1, int(168 * z)), max(1, int(56 * z)))
 
     def curve_pts(self, p0, p1):
-        dx = max(40, abs(p1[0] - p0[0]) * 0.5)
+        dx = max(40 * self.nd_zoom, abs(p1[0] - p0[0]) * 0.5)
         c1, c2 = (p0[0] + dx, p0[1]), (p1[0] - dx, p1[1])
         pts = []
         for i in range(21):
@@ -1720,8 +1720,9 @@ class CanvasMixin:
                         u ** 3 * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t ** 3 * p1[1]))
         return pts
 
-    def wire_at(self, mx, my, tol=6):
+    def wire_at(self, mx, my, tol=None):
         """The child whose wire to its parent passes under the mouse."""
+        tol = max(1, int(6 * self.nd_zoom)) if tol is None else tol
         for o in self.objs:
             if o.parent:
                 p, c = self.node_rect(o.parent), self.node_rect(o)
@@ -1734,6 +1735,14 @@ class CanvasMixin:
                         return o
         return None
 
+    def schematic_text(self, text, x, y, font, color, zoom):
+        """Draw graph labels at the same scale as their nodes."""
+        surface = font.render(str(text), True, color)
+        size = (max(1, int(surface.get_width() * zoom)), max(1, int(surface.get_height() * zoom)))
+        if size != surface.get_size():
+            surface = pygame.transform.smoothscale(surface, size)
+        self.screen.blit(surface, (int(x), int(y)))
+
     def draw_schematic(self, r):
         self.hit(r, self.schem_click, (1, 2))
         self.hit(r, self.schem_menu, (3,))
@@ -1742,25 +1751,25 @@ class CanvasMixin:
             if any(not r.colliderect(self.node_rect(o)) for o in self.objs):
                 self.nd_fit()
         prev = self.push_clip(r)
-        gs = max(8, int(32 * self.nd_zoom))
+        z = self.nd_zoom
+        gs = max(2, int(32 * z))
         for gx in range(r.x + int(self.nd_ox) % gs, r.right, gs):
             for gy in range(r.y + int(self.nd_oy) % gs, r.bottom, gs):
                 self.screen.set_at((gx, gy), (50, 50, 50))
         self.txt("SCHEMATIC", r.x + 24, r.y + 24, self.fb2)
         self.txt("Scroll = zoom   |   middle / Alt drag = pan   |   drag empty space = select   |   Del = delete",
                  r.x + 24, r.y + 48, self.f11, COLOR_MUTED)
-        z = 1.0  # UI details are screen-sized; only node positions and the grid zoom.
         tb = self.table_rect()
         for o in self.objs:
             c = self.node_rect(o)
             if o.parent:                                      # parent -> child, the arrow points at the child
                 p = self.node_rect(o.parent)
                 p0, p1 = (p.right, self.port_y(p)), (c.x, self.port_y(c))
-                col, w = ((255, 215, 70), 3) if (o is self.sel_wire or o is self.drop_wire) else ((150, 160, 220), 2)
+                col, w = ((255, 215, 70), max(1, int(3 * z))) if (o is self.sel_wire or o is self.drop_wire) else ((150, 160, 220), max(1, int(2 * z)))
             else:                                             # nodes without a parent hang on the Table
-                p0, p1, col, w = (tb.right, self.port_y(tb)), (c.x, self.port_y(c)), (70, 76, 100), 1
+                p0, p1, col, w = (tb.right, self.port_y(tb)), (c.x, self.port_y(c)), (70, 76, 100), max(1, int(z))
             pygame.draw.lines(self.screen, col, False, self.curve_pts(p0, p1), w)
-            rpoly(self.screen, col, [(p1[0] - 2, p1[1]), (p1[0] - 11, p1[1] - 5), (p1[0] - 11, p1[1] + 5)], 1)
+            rpoly(self.screen, col, [(p1[0] - 2 * z, p1[1]), (p1[0] - 11 * z, p1[1] - 5 * z), (p1[0] - 11 * z, p1[1] + 5 * z)], max(1, z))
         if self.link_drag:
             src, side = self.link_drag
             if src == "table":
@@ -1768,51 +1777,51 @@ class CanvasMixin:
             else:
                 nr = self.node_rect(src)
             if side == "out":
-                self.curve((nr.right, self.port_y(nr)), self.link_mouse, COLOR_TEAL)
+                self.curve((nr.right, self.port_y(nr)), self.link_mouse, COLOR_TEAL, max(1, int(2 * z)))
             else:
-                self.curve(self.link_mouse, (nr.x, self.port_y(nr)), COLOR_TEAL)
+                self.curve(self.link_mouse, (nr.x, self.port_y(nr)), COLOR_TEAL, max(1, int(2 * z)))
         for o in self.objs:
             nr = self.node_rect(o)
             sel = o in self.sel
             lc = self.label_color(o)
             if self.is_pill(o):                                    # peg / null / bone / controller: just a coloured pill with its name
-                self.rrect(nr, shade(lc, 0.62), nr.h // 2)
-                self.rrect(nr, (255, 255, 255) if sel else lc, nr.h // 2, 2)
+                self.rrect(nr, shade(lc, 0.62), max(1, int(nr.h / 2)))
+                self.rrect(nr, (255, 255, 255) if sel else lc, max(1, int(nr.h / 2)), max(1, int(2 * z)))
                 pc = self.push_clip(nr)
                 tid = "ctrl" if o.kind.startswith("ctrl") else o.kind
-                draw_tool_icon(self.screen, tid, pygame.Rect(nr.x + 4, nr.y, nr.h, nr.h), (255, 255, 255))
+                draw_tool_icon(self.screen, tid, pygame.Rect(nr.x + int(4 * z), nr.y, nr.h, nr.h), (255, 255, 255))
                 rid = f"rename_{id(o)}"
                 if self.edit and self.edit.get("id") == rid:
-                    self.field((nr.x + nr.h, nr.y + 3, nr.w - nr.h - 10, nr.h - 6), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
+                    self.field((nr.x + nr.h, nr.y + int(3 * z), nr.w - nr.h - int(10 * z), max(1, nr.h - int(6 * z))), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
                 else:
-                    self.txt(self.fit_text(o.name, self.fb, nr.w - nr.h - 14), nr.x + nr.h + 4, nr.centery - 8, self.fb, (255, 255, 255))
+                    self.schematic_text(self.fit_text(o.name, self.fb, 106), nr.x + nr.h + int(4 * z), nr.centery - int(8 * z), self.fb, (255, 255, 255), z)
                 self.pop_clip(pc)
-                prd = max(4, int(6 * z))
+                prd = max(1, int(6 * z))
                 pygame.draw.circle(self.screen, (230, 230, 230), (nr.right, self.port_y(nr)), prd)
                 pygame.draw.circle(self.screen, (230, 230, 230) if o.parent else (150, 150, 150), (nr.x, self.port_y(nr)), prd)
                 continue
-            rad = max(4, int(8 * z))
+            rad = max(1, int(8 * z))
             self.rrect(nr, (46, 48, 54), rad)
-            self.rrect(nr, lc if sel else (80, 80, 90), rad, 2)
-            hh = max(12, int(20 * z))
-            pygame.draw.rect(self.screen, shade(lc, 0.72), (nr.x + 2, nr.y + 2, nr.w - 4, hh), border_top_left_radius=max(3, int(6 * z)),
-                             border_top_right_radius=max(3, int(6 * z)))
+            self.rrect(nr, lc if sel else (80, 80, 90), rad, max(1, int(2 * z)))
+            hh = max(1, int(20 * z))
+            pygame.draw.rect(self.screen, shade(lc, 0.72), (nr.x + int(2 * z), nr.y + int(2 * z), max(1, nr.w - int(4 * z)), hh), border_top_left_radius=max(1, int(6 * z)),
+                             border_top_right_radius=max(1, int(6 * z)))
             pc = self.push_clip(nr)
             tc = (255, 255, 255)                           # names are always white, with a soft shadow
-            nm = self.fit_text(o.name, self.fb, nr.w - 56)
-            ty = nr.y + 3 + max(0, (hh - 14) // 2)
+            nm = self.fit_text(o.name, self.fb, 112)
+            ty = nr.y + int(3 * z) + max(0, (hh - int(14 * z)) // 2)
             rid = f"rename_{id(o)}"
             if self.edit and self.edit.get("id") == rid:
-                self.field((nr.x + 6, nr.y + 3, nr.w - 40, hh - 2), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
+                self.field((nr.x + int(6 * z), nr.y + int(3 * z), nr.w - int(40 * z), max(1, hh - int(2 * z))), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
             else:
-                self.txt(nm, nr.x + 13, ty + 1, self.fb, (0, 0, 0))
-                self.txt(nm, nr.x + 12, ty, self.fb, tc)
-            draw_icon(self.screen, "tri_d" if o.node_open else "tri_r", pygame.Rect(nr.right - 26, nr.y + 2, 22, hh), tc)
-            self.txt(o.kind.capitalize(), nr.x + 12, nr.y + hh + 10, self.f11, COLOR_MUTED)
+                self.schematic_text(nm, nr.x + int(13 * z), ty + int(z), self.fb, (0, 0, 0), z)
+                self.schematic_text(nm, nr.x + int(12 * z), ty, self.fb, tc, z)
+            draw_icon(self.screen, "tri_d" if o.node_open else "tri_r", pygame.Rect(nr.right - int(26 * z), nr.y + int(2 * z), max(1, int(22 * z)), hh), tc)
+            self.schematic_text(o.kind.capitalize(), nr.x + int(12 * z), nr.y + hh + int(10 * z), self.f11, COLOR_MUTED, z)
             if o.node_open:
-                self.node_thumb(o, pygame.Rect(nr.x + 12, nr.y + int(56 * z), nr.w - 24, nr.h - int(56 * z) - 12))
+                self.node_thumb(o, pygame.Rect(nr.x + int(12 * z), nr.y + int(56 * z), max(1, nr.w - int(24 * z)), max(1, nr.h - int(68 * z))))
             self.pop_clip(pc)
-            prd = max(4, int(6 * z))
+            prd = max(1, int(6 * z))
             pygame.draw.circle(self.screen, (230, 230, 230), (nr.right, self.port_y(nr)), prd)
             pygame.draw.circle(self.screen, (230, 230, 230) if o.parent else (150, 150, 150), (nr.x, self.port_y(nr)), prd)
         if self.link_drag:                                   # highlight the node the wire will connect to
@@ -1820,20 +1829,21 @@ class CanvasMixin:
             tgt = next((o for o in self.objs if o is not src and self.node_rect(o).collidepoint(self.link_mouse)), None)
             if tgt:
                 nr = self.node_rect(tgt)
-                self.rrect(nr.inflate(10, 10), (255, 215, 70), max(6, int(12 * z)), 3)
-                pygame.draw.circle(self.screen, (255, 215, 70), (nr.x if side == "out" else nr.right, self.port_y(nr)), max(7, int(11 * z)))
-        self.rrect(tb, (46, 48, 54), max(4, int(8 * z)))                    # the Table: the root of the scene
-        self.rrect(tb, (130, 138, 160), max(4, int(8 * z)), 2)
-        pygame.draw.rect(self.screen, (84, 90, 110), (tb.x + 2, tb.y + 2, tb.w - 4, max(12, int(20 * z))),
-                         border_top_left_radius=max(3, int(6 * z)), border_top_right_radius=max(3, int(6 * z)))
+                self.rrect(nr.inflate(int(10 * z), int(10 * z)), (255, 215, 70), max(1, int(12 * z)), max(1, int(3 * z)))
+                pygame.draw.circle(self.screen, (255, 215, 70), (nr.x if side == "out" else nr.right, self.port_y(nr)), max(1, int(11 * z)))
+        self.rrect(tb, (46, 48, 54), max(1, int(8 * z)))                    # the Table: the root of the scene
+        self.rrect(tb, (130, 138, 160), max(1, int(8 * z)), max(1, int(2 * z)))
+        th = max(1, int(20 * z))
+        pygame.draw.rect(self.screen, (84, 90, 110), (tb.x + int(2 * z), tb.y + int(2 * z), max(1, tb.w - int(4 * z)), th),
+                         border_top_left_radius=max(1, int(6 * z)), border_top_right_radius=max(1, int(6 * z)))
         pct = self.push_clip(tb)
-        self.txt("Table", tb.x + 12, tb.y + 3 + max(0, (max(12, int(20 * z)) - 14) // 2), self.fb, (255, 255, 255))
-        self.txt("scene root", tb.x + 12, tb.y + max(12, int(20 * z)) + 10, self.f11, COLOR_MUTED)
+        self.schematic_text("Table", tb.x + int(12 * z), tb.y + int(3 * z) + max(0, (th - int(14 * z)) // 2), self.fb, (255, 255, 255), z)
+        self.schematic_text("scene root", tb.x + int(12 * z), tb.y + th + int(10 * z), self.f11, COLOR_MUTED, z)
         self.pop_clip(pct)
-        pygame.draw.circle(self.screen, (230, 230, 230), (tb.right, self.port_y(tb)), max(4, int(6 * z)))
+        pygame.draw.circle(self.screen, (230, 230, 230), (tb.right, self.port_y(tb)), max(1, int(6 * z)))
         if self.nd_marquee:
             x1, y1, x2, y2 = self.nd_marquee
-            pygame.draw.rect(self.screen, COLOR_TEAL, (min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)), 1)
+            pygame.draw.rect(self.screen, COLOR_TEAL, (min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)), max(1, int(z)))
         bar = pygame.Rect(r.x + 8, r.bottom - 48, r.w - 16, 40)          # bottom toolbar
         self.rrect(bar, COLOR_TL, 12)
         x = bar.x + 8
