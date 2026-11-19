@@ -99,12 +99,12 @@ TOOL_INFO = {
     "fill": ("Fill Bucket", "F", "Click a shape or closed stroke to fill it with the current fill colour."),
     "eraser": ("Eraser", "E", "Erases pixels on a raster layer (select or create a raster layer first)."),
     "pen": ("Pen", "G", "Coming soon: bezier paths."),
+    "control_point_editor": ("Control Point Editor", "", "Coming soon: edit the control points of pen paths."),
     "null": ("Null", "N", "Click to place a null object (a target to link other objects to)."),
     "ctrl": ("Position Controller", "", "Click to place a controller that only moves (scale and rotation are locked)."),
     "ctrl_rot": ("Rotation Controller", "", "Click to place a controller that only rotates (everything else is locked)."),
     "ctrl_posrot": ("Position + Rotation Controller", "", "Click to place a controller that moves and rotates (scale is locked)."),
     "peg": ("Peg", "", "Click to place a peg: a transform-only parent you can drive with an expression or script."),
-    "select_level": ("Select Whole Level", "", "Click a shape to select every shape of its layer."),
     "multiline": ("Multiline", "", "Coming soon: multi-segment lines."),
     "text": ("Text", "", "Coming soon: text layers."),
     "eyedropper": ("Eyedropper", "", "Click anywhere in the viewport to pick that colour as the fill colour."),
@@ -121,17 +121,18 @@ TOOL_INFO = {
     "joy_y": ("Slider Y", "", "Click to place a slider that moves only along the Y axis."),
     "joy_xy": ("Joystick XY", "", "Click to place a joystick that moves on both axes."),
     "bone": ("Create Bones", "J", "Drag to draw a bone. Start the next bone on the end of the last one to chain them."),
-    "anchor": ("Anchor Point", "Y", "Drag to move the pivot of the selected object (it rotates and scales around it). Hold Ctrl to snap to the box corners, edges, centre and the artboard centre."),
     "hand": ("Hand", "H", "Drag to pan the view. Scroll to zoom. Home = fit."),
 }
-SLOTS = [["select", "select_level", "transform", "anchor", "animate"], None,
-         ["rect", "ellipse", "polygon", "line"], ["pen", "multiline"], ["brush", "eraser"], ["fill"], ["text"], ["eyedropper"], None,
+# Każdy wpis SLOTS to przycisk Toolboxa: pierwszy identyfikator jest widoczny,
+# a kolejne stają się opcjami po przytrzymaniu przycisku.
+SLOTS = [["animate"], ["select"], ["anchor"],
+         ["rect", "ellipse", "polygon", "line", "multiline"], ["pen", "control_point_editor"], ["brush", "eraser"], ["fill"], ["text"], ["eyedropper"], None,
          ["scissors"], ["taper"], ["lipsync"], None,
          ["joy_x", "joy_y", "joy_xy"], ["ctrl", "ctrl_rot", "ctrl_posrot", "null", "peg"], ["bone", "bone_edit", "bone_anim", "bone_ik"], None,
          ["hand", "zoom", "view_rotate"]]
-KEYMAP = {pygame.K_v: "select", pygame.K_t: "transform", pygame.K_r: "rect", pygame.K_b: "brush",
-          pygame.K_e: "eraser", pygame.K_a: "animate", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_y: "anchor", pygame.K_f: "fill", pygame.K_g: "pen", pygame.K_n: "null", pygame.K_j: "bone",
-          pygame.K_h: "hand", pygame.K_i: "eyedropper", pygame.K_o: "ellipse"}
+KEYMAP = {pygame.K_v: "select", pygame.K_r: "rect", pygame.K_b: "brush",
+          pygame.K_e: "eraser", pygame.K_a: "animate", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_f: "fill", pygame.K_g: "pen", pygame.K_n: "null", pygame.K_j: "bone",
+          pygame.K_h: "hand", pygame.K_i: "eyedropper", pygame.K_o: "ellipse", pygame.K_x: "bone_anim", pygame.K_s: "bone"}
 WORKSPACES = ["Drawing", "Animate", "Schematic", "Fx", "Expressions", "Script"]
 MENU_NAMES = ["File", "Edit", "Object", "Type", "Effects", "View", "Tools", "Panels"]
 FORMATS = [("HD 1920 x 1080", 1920, 1080), ("4K UHD 3840 x 2160", 3840, 2160),
@@ -210,14 +211,14 @@ _icon_cache = {}
 _icon_index = None
 _icon_unmatched = []
 ICON_ALIASES = {"bone_animation": "bone_anim", "slider_x": "joy_x", "slider_y": "joy_y", "psition_rotation_controller": "ctrl_posrot",
-                "edit_skeleton": "bone_edit", "color_picker": "eyedropper", "control_point_editor": "pen", "fill_bucket": "fill", "paint_bucket": "fill", "bucket": "fill", "controller": "ctrl", "position_controller": "ctrl",
+                "edit_skeleton": "bone_edit", "color_picker": "eyedropper", "fill_bucket": "fill", "paint_bucket": "fill", "bucket": "fill", "controller": "ctrl", "position_controller": "ctrl",
                 "rotation_controller": "ctrl_rot", "position_rotation_controller": "ctrl_posrot", "pos_rot_controller": "ctrl_posrot",
                 "position_and_rotation_controller": "ctrl_posrot", "joystick_x": "joy_x", "joystick_y": "joy_y", "joystick_xy": "joy_xy",
                 "joystick": "joy_xy", "cut": "scissors", "scissor": "scissors", "taper_join": "taper", "taper_tool": "taper",
                 "paperclip": "taper", "paper_clip": "taper", "animate_bones": "bone_anim", "pose_bones": "bone_anim", "bones": "bone",
                 "create_bones": "bone", "edit_bones": "bone_edit", "create_ik": "bone_ik", "ik": "bone_ik", "rotate_view": "view_rotate",
-                "rotate_artboard": "view_rotate", "hand_tool": "hand", "pan": "hand", "select_whole_level": "select_level",
-                "whole_level": "select_level", "free_transform": "transform", "anchor_point": "anchor", "multi_line": "multiline",
+                "rotate_artboard": "view_rotate", "hand_tool": "hand", "pan": "hand",
+                "select_whole_level": "select", "whole_level": "select", "free_transform": "transform", "anchor_point": "anchor", "multi_line": "multiline",
                 "rectangle": "rect", "square": "rect", "circle": "ellipse", "oval": "ellipse", "lasso": "lipsync", "speech": "lipsync",
                 "text_tool": "text", "pen_tool": "pen", "brush_tool": "brush", "eraser_tool": "eraser", "zoom_tool": "zoom",
                 "magnifier": "zoom", "color_picker": "eyedropper", "picker": "eyedropper", "animate_tool": "animate", "move": "select",
@@ -328,18 +329,33 @@ def cursor_png(kind):
 
 
 def ui_icon(name):
-    """Small interface icons from icons/ui/ (lock_on, lock_off, eye_on, eye_off)."""
+    """Small interface icons from icons/ui/; direct icons/ files remain supported for old assets."""
     key = ("ui", name)
     if key not in _icon_cache:
         sf = None
-        p = os.path.join(ICONS_DIR, "ui", name + ".png")
-        if os.path.exists(p):
+        paths = (os.path.join(ICONS_DIR, "ui", name + ".png"), os.path.join(ICONS_DIR, name + ".png"))
+        p = next((path for path in paths if os.path.exists(path)), None)
+        if p:
             try:
                 sf = pygame.image.load(p).convert_alpha()
             except Exception:  # noqa
                 sf = None
         _icon_cache[key] = (sf, True)
     return _icon_cache[key][0]
+
+
+def draw_ui_icon(surf, name, rect, col, state=None):
+    """Draw an optional icons/ui PNG, tinted to the current interface colour."""
+    icon = ui_icon(f"{name}_{state}") if state else None
+    icon = icon or ui_icon(name)
+    if icon is None:
+        return False
+    if icon.get_size() != rect.size:
+        icon = pygame.transform.smoothscale(icon, rect.size)
+    tinted = icon.copy()
+    tinted.fill((*col, 255), special_flags=pygame.BLEND_RGBA_MULT)
+    surf.blit(tinted, rect)
+    return True
 
 
 def _clip_cmd(write):
@@ -392,6 +408,8 @@ def load_icon(name, size=30):
 
 def draw_icon(surf, kind, r, col):
     """Transport / small UI icons - all with rounded corners."""
+    if draw_ui_icon(surf, kind, r, col):
+        return
     cx, cy = r.center
     s = 6
     d = pygame.draw
@@ -515,9 +533,6 @@ def draw_tool_icon(surf, tid, r, col):
     elif tid == "lipsync":
         d.ellipse(surf, col, (cx - 9, cy - 8, 18, 14), 2)
         d.polygon(surf, col, [(cx - 5, cy + 5), (cx - 8, cy + 10), (cx, cy + 6)])
-    elif tid == "select_level":
-        d.rect(surf, col, (cx - 9, cy - 9, 12, 12), 2, border_radius=3)
-        d.rect(surf, col, (cx - 3, cy - 3, 12, 12), 2, border_radius=3)
     elif tid == "artboard":
         d.rect(surf, col, (cx - 8, cy - 8, 16, 16), 2, border_radius=3)
     elif tid in ("ctrl_rot", "ctrl_posrot"):

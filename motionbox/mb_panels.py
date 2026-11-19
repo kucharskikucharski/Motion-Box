@@ -343,9 +343,11 @@ class PanelsMixin:
             y += 60
             self.heading(x, y, "Rig", "characters")
             self.button((x, y + 28, w, 32), "Generate body drawing layers", lambda mx, my: self.generate_body_layers(), font=self.f11,
-                        hint="Empty, parented layers: Head, Neck, Arm_R ... Draw each part in its layer, put the anchors on the joints")
+                        hint="Creates the named drawing layers and their hierarchy")
             self.button((x, y + 66, w, 32), "Do the rig", lambda mx, my: self.do_rig(), font=self.f11,
-                        hint="Builds the bones from the layers' names, anchors and hierarchy, puts IK on arms and legs")
+                        hint="Parents drawings to prepared bones and adds wrist / ankle IK")
+            self.button((x, y + 104, w, 32), "Generate Bones Structure", lambda mx, my: self.generate_bones_structure(), font=self.f11,
+                        hint="Creates editable bones with matching names and hierarchy; drawing layers stay separate")
             return
         self.txt(o.name if len(self.sel) == 1 else f"{len(self.sel)} objects", x, y, self.fb)
         y += 32
@@ -983,8 +985,8 @@ class PanelsMixin:
                      ("Keyboard Shortcuts...", lambda: self.open_info("KEYBOARD SHORTCUTS", SHORTCUTS), "", None)],
             "Object": [("New Drawing / Peg / Null...", lambda: setattr(self, "layer_dlg", True), "", None),
                        ("New Peg", lambda: self.new_obj("peg", self.aw // 2, self.ah // 2), "", None),
-                       ("Reset Anchor Point", self.reset_anchor, "", None),
                        ("Generate Body Drawing Layers", self.generate_body_layers, "", None),
+                       ("Generate Bones Structure", self.generate_bones_structure, "", None),
                        ("Do the Rig", self.do_rig, "", None),
                        ("Joystick Setup...", self.jwiz_start, "", None),
                        ("Edit Drawing without the Rig", self.enter_rest_edit, "", None),

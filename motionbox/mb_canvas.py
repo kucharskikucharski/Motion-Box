@@ -229,7 +229,7 @@ class CanvasMixin:
         self.hover = h
 
     GLYPH_TOOLS = ("fill", "eyedropper", "scissors", "zoom", "lipsync", "taper", "text", "pen", "multiline", "artboard",
-                   "select_level", "anchor", "bone", "bone_anim", "bone_ik", "ctrl", "ctrl_rot", "ctrl_posrot", "null", "peg",
+                   "bone", "bone_anim", "bone_ik", "ctrl", "ctrl_rot", "ctrl_posrot", "null", "peg", "control_point_editor",
                    "joy_x", "joy_y", "joy_xy", "rect", "ellipse", "polygon", "line", "eraser", "view_rotate")
 
     def update_cursor(self):
@@ -262,7 +262,7 @@ class CanvasMixin:
                                                            else "resize_v" if i in (4, 6) else "resize_h")
         elif inv and self.tool == "brush":                  # a circle that shows the brush size ([ and ] change it)
             kind = f"brush_{int(clamp(self.brush_px * self.zoom, 8, 120)) // 2 * 2}"
-        elif inv and self.tool not in ("select", "hand") and load_icon_state(self.tool, 30, "default")[0] is not None:   # no icon = normal arrow
+        elif inv and self.tool != "hand" and load_icon_state(self.tool, 30, "default")[0] is not None:   # keep tool icons visible between clicks
             kind = "tool_" + self.tool
         if kind != self.cursor_kind:
             self.cursor_kind = kind
@@ -389,12 +389,6 @@ class CanvasMixin:
             self.ox, self.oy = mx - (mx - self.ox) * nz / self.zoom, my - (my - self.oy) * nz / self.zoom
             self.zoom, self.view_fit = nz, False
             return
-        if tool == "select_level":
-            o = self.pick(mx, my)
-            if o and o.owner:
-                self.sel = list(o.owner.items)
-                self.msg(f"Selected the whole level ({len(self.sel)} shapes)")
-            return
         if tool == "bone":
             return self.start_bone(mx, my)
         if tool == "eraser":
@@ -414,17 +408,10 @@ class CanvasMixin:
             return self.bone_anim_click(mx, my)
         if tool == "bone_edit":
             return self.bone_edit_click(mx, my)
-        if tool in ("pen", "multiline", "text", "taper", "lipsync", "view_rotate"):
+        if tool in ("pen", "control_point_editor", "multiline", "text", "taper", "lipsync", "view_rotate"):
             self.msg(f"{TOOL_INFO[tool][0]}: coming soon")
             return
-        if tool == "anchor":
-            return self.start_anchor(mx, my)
         p0 = self.psel
-        if p0 and len(self.sel) == 1 and not p0.locked and p0.kind not in ("vlayer", "rlayer", "bone") and not self.link_mode:
-            wx, wy = self.world(p0, self.frame)[:2]
-            ax_, ay_ = self.a2s(wx, wy)
-            if math.hypot(mx - ax_, my - ay_) <= 6:                    # the little cross is the anchor point
-                return self.start_anchor(mx, my)
         gh = self.group_hit(mx, my) if tool in ("select", "transform") else None
         if gh:
             return self.start_group_scale(gh[1]) if gh[0] == "scale" else self.start_group_rotate(gh[1])
@@ -451,6 +438,9 @@ class CanvasMixin:
             return
         if o is None:
             return self.start_marquee(mx, my, bool(shift))
+        # Selecting the owner makes layer transforms affect every drawing phase together.
+        if self.select_all_phases and o.owner and o.owner.kind == "vlayer":
+            o = o.owner
         if shift:
             self.select(o, add=True)
             return
@@ -716,15 +706,6 @@ class CanvasMixin:
 
     def bone_anim_click(self, mx, my):
         """A bone and every drawing that follows it are ONE element. Click any of them: the bone gets the keyframe."""
-        ax, ay = self.s2a(mx, my)
-        if pygame.key.get_mods() & pygame.KMOD_SHIFT:              # Shift + click on a joint: pin / unpin it
-            for b in self.objs:
-                if b.kind == "bone":
-                    jx, jy = self.world(b, self.frame)[:2]
-                    if math.hypot(jx - ax, jy - ay) * self.zoom <= 10:
-                        b.pin = not b.pin
-                        self.msg(f"Joint {b.name} {'pinned (rotation locked)' if b.pin else 'unpinned'}")
-                        return
         o = self.pick(mx, my)
         if o and (o.kind.startswith("ctrl") or o.limit):          # IK controllers and joysticks are animated with the same tool
             self.sel = [o]
@@ -738,9 +719,6 @@ class CanvasMixin:
             if c:
                 self.sel = [c]
                 return self.start_move(mx, my)
-        if b.pin:
-            self.msg(f"{b.name} is pinned - Shift+click its joint to unpin")
-            return
         self.sel = [b]
         return self.start_rotate(b, key=True)
 
@@ -764,9 +742,55 @@ class CanvasMixin:
         f = self.animate_filter
         return (f == "peg" and isp) or (f == "ctrl" and isc) or (f == "both" and (isp or isc))
 
+    def active_bone_ids(self):
+        if not self.show_active_bones:
+            return None
+        active = next((s for s in self.sel if s.kind == "bone"), None)
+        if active is None:
+            # Animate Bones selects the IK controller while posing; recover its linked chain for display.
+            for selected in self.sel:
+                active = next((b for b in self.objs if b.kind == "bone" and b.ik
+                               and b.ik.get("target") == selected.name and b.ik.get("role") == "lower"), None)
+                if active is not None:
+                    break
+        if active is None:
+            return set()
+        connected = {active}
+        cur = active
+        while cur.parent and cur.parent.kind == "bone":
+            siblings = [b for b in self.objs if b.kind == "bone" and b.parent is cur.parent]
+            if len(siblings) > 1:
+                break
+            cur = cur.parent
+            connected.add(cur)
+        changed = True
+        while changed:
+            changed = False
+            for bone in self.objs:
+                siblings = [b for b in self.objs if b.kind == "bone" and b.parent is bone.parent]
+                if bone.kind == "bone" and bone.parent in connected and bone not in connected and len(siblings) == 1:
+                    connected.add(bone)
+                    changed = True
+        return {id(bone) for bone in connected}
+
     def draw_select_opts(self, v):
-        self.rrect((v.x + 8, v.y + 8, 214, 32), (30, 30, 34), 16)
+        # These settings constrain layer picking or make all drawing phases share one transform.
+        self.rrect((v.x + 8, v.y + 8, 410, 32), (30, 30, 34), 16)
         self.layer_lock_checkbox(v.x + 20, v.y + 16)
+        self.checkbox(v.x + 170, v.y + 16, self.select_all_phases,
+                      lambda mx, my: setattr(self, "select_all_phases", not self.select_all_phases),
+                      "Select the drawing layer so position, scale, rotation and opacity affect every phase")
+        self.txt("Select all phases", v.x + 194, v.y + 16)
+
+    def draw_bone_opts(self, v):
+        self.rrect((v.x + 8, v.y + 8, 366, 32), (30, 30, 34), 16)
+        self.checkbox(v.x + 20, v.y + 16, self.show_active_bones,
+                      lambda mx, my: setattr(self, "show_active_bones", not self.show_active_bones),
+                      "Show only the selected bone and its connected bone hierarchy")
+        self.txt("Show only active Bones", v.x + 44, v.y + 16)
+        if self.tool == "bone_anim":
+            self.button((v.x + 248, v.y + 12, 112, 24), "Reset Pose", self.reset_bone_pose,
+                        font=self.f11, hint="Key the skeleton back to its unanimated base pose at the playhead")
 
     def layer_lock_checkbox(self, x, y):
         self.checkbox(x, y, self.single_layer, lambda mx, my: setattr(self, "single_layer", not self.single_layer),
@@ -1152,9 +1176,6 @@ class CanvasMixin:
             for lx_ in (0, o.w):
                 jx, jy = self.a2s(*self.xf(x, y, s, rot, lx_, 0))
                 pygame.draw.circle(self.screen, o.stroke, (int(jx), int(jy)), max(3, int(5 * self.zoom * s)), 2)
-                if lx_ == 0 and o.pin:                               # pinned joint: a small yellow square
-                    pygame.draw.rect(self.screen, (255, 205, 60), (int(jx) - 5, int(jy) - 5, 10, 10))
-                    pygame.draw.rect(self.screen, (40, 40, 40), (int(jx) - 5, int(jy) - 5, 10, 10), 1)
 
     def draw_image(self, o, f, x, y, s, rot, op):
         sf = self.footage_surface(o, f)
@@ -1214,7 +1235,10 @@ class CanvasMixin:
             self.screen, self.zoom, self.ox, self.oy = small, rz / q, (rox - v.x) / q, (roy - v.y) / q
         try:
             hid = self.masked_desc_ids()
+            active_bones = self.active_bone_ids()
             for o in reversed(self.objs):
+                if o.kind == "bone" and active_bones is not None and id(o) not in active_bones:
+                    continue
                 if id(o) not in hid and self.eff_visible(o) and self.in_range(o) and o.name not in src and not (self.view["render"] and (not o.render or o.kind in ("null", "peg", "bone") or o.kind.startswith("ctrl") or self.is_controller(o))) and (self.rest_layer is None or o is self.rest_layer):
                     self.draw_layer(o)
                     if o.caption:                                  # slider / controller name above the object
@@ -1341,6 +1365,8 @@ class CanvasMixin:
             self.draw_animate_opts(v)
         elif self.tool in ("select", "transform"):
             self.draw_select_opts(v)
+        elif self.tool in ("bone", "bone_edit", "bone_anim", "bone_ik"):
+            self.draw_bone_opts(v)
         self.draw_jwiz(v)
         if self.rest_layer is not None:                              # drawing view banner
             self.rrect((v.x + 8, v.y + 8, 430, 34), (30, 30, 34), 17)
@@ -1364,6 +1390,10 @@ class CanvasMixin:
                 if key == "onion":
                     self.hit(rc, lambda mx, my: setattr(self, "ctx", {"pos": (mx, my), "items": [(f"Previous frames: {n}", lambda n=n: self.onion.__setitem__("before", n)) for n in (0, 1, 2, 3, 5)] + [(f"Next frames: {n}", lambda n=n: self.onion.__setitem__("after", n)) for n in (0, 1, 2, 3, 5)]}), (3,))
             cx, cy = rc.center
+            if draw_ui_icon(self.screen, f"view_{key}", rc.inflate(-8, -8), col,
+                            "active" if self.view.get(key, False) else "default"):
+                x += 32
+                continue
             if key == "render":
                 self.eye_icon(cx, cy, col)
             elif key == "grid3":

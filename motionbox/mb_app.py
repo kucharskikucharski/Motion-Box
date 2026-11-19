@@ -79,9 +79,11 @@ class AppBase:
         self.ph_sel, self.ph_play, self.ph_prev = set(), False, None
         self.tl_query, self.tl_type = "", "All"
         self.single_layer, self.brush_smooth = False, 40
+        self.select_all_phases = False  # Select the drawing layer so edits apply to every phase.
+        self.show_active_bones = False
         self.ph_view, self.ph_tiles, self.ph_drop, self.ph_ghost, self._pal_click = "grid", [], None, None, (None, 0)
         self.frame_mode, self.fr_sel, self.fr_clip = True, set(), None
-        self.tl_lcw, self.fr_anchor, self.tdlg, self._title_t, self._title = 240, None, None, 0, ""
+        self.tl_lcw, self.fr_anchor, self.tdlg, self._title_t, self._title = 320, None, None, 0, ""
         self.preview_q, self.ease_pop, self.mblur, self.mblur_shutter = 1, None, 1, 180
         self.jwiz = None
         Obj.PHASE_HOOK = self.phase_from_slider
@@ -447,16 +449,6 @@ class AppBase:
                                           ("New layer", lambda: self.new_layer("vlayer", True)),
                                           ("Delete", self.delete_selected)] + ([("Show in footage", lambda: self.show_in_footage(o))] if o.src is not None else [])}
 
-    def reset_anchor(self):
-        for o in self.sel:
-            ax, ay = o.anchor
-            if ax or ay:
-                x, y, s, r = self.world(o, self.frame)
-                a = math.radians(r)
-                o.anchor = (0.0, 0.0)
-                self.set_world_pos(o, x + (-ax * math.cos(a) + ay * math.sin(a)) * s, y + (-ax * math.sin(a) - ay * math.cos(a)) * s)
-        self.msg("Anchor point moved back to the centre")
-
     # ------------------------------------------------------- clipboard (copy / cut / paste)
     def copy_sel(self, cut=False):
         if not self.sel:
@@ -792,6 +784,51 @@ class AppBase:
         if other:
             other.ik = None
 
+    def reset_bone_pose(self, mx=0, my=0):
+        """At the playhead, key animated bones and IK targets back to their unanimated base values."""
+        updates, targets = [], {}
+        frame = int(self.frame)
+        for bone in self.objs:
+            if bone.kind != "bone":
+                continue
+            if not bone.ik and bone.keys["rotation"]:
+                updates.append((bone, "rotation", bone.base["rotation"]))
+            if bone.ik:
+                target = self.find(bone.ik.get("target", ""))
+                if target:
+                    targets[id(target)] = target
+        for target in targets.values():
+            for prop in ("x", "y"):
+                if target.keys[prop]:
+                    updates.append((target, prop, target.base[prop]))
+        updates = [(o, prop, value) for o, prop, value in updates
+                   if abs(self.val(o, prop, frame) - value) > 0.05]
+        if not updates:
+            self.msg("The skeleton is already at its base pose at this frame")
+            return
+        self.push_undo()
+        for o, prop, value in updates:
+            o.keys[prop][frame] = value
+        self.msg(f"Reset {len(updates)} skeleton value(s) to the base pose at frame {frame}")
+
+    def clamp_ik_target_position(self, target, wx, wy):
+        """Keep a dragged IK controller within the maximum reach of its two-bone chain."""
+        linked = [b for b in self.objs if b.kind == "bone" and b.ik and b.ik.get("target") == target.name]
+        upper = next((b for b in linked if b.ik.get("role") == "upper"), None)
+        lower = next((b for b in linked if b.ik.get("role") == "lower"), None)
+        if upper is None or lower is None or lower.parent is not upper:
+            return wx, wy
+        px, py = self.world_pos(upper, self.frame)
+        l1 = upper.w * self.world_scale(upper, self.frame)
+        l2 = lower.w * self.world_scale(lower, self.frame)
+        reach = max(0.0, l1 + l2 - 1e-3)
+        dx, dy = wx - px, wy - py
+        dist = math.hypot(dx, dy)
+        if dist > reach and dist > 0:
+            k = reach / dist
+            return px + dx * k, py + dy * k
+        return wx, wy
+
     def world(self, o, f, depth=0):
         x, y, s, r = (self.val(o, p, f) for p in ("x", "y", "scale", "rotation"))
         if o.parent and depth < 32:
@@ -813,6 +850,8 @@ class AppBase:
     def set_world_pos(self, o, wx, wy):
         if o.locked or {"x", "y"} <= self.locked_props(o):
             return
+        if o.kind.startswith("ctrl"):
+            wx, wy = self.clamp_ik_target_position(o, wx, wy)
         lx, ly = self.to_local(o.parent, wx, wy) if o.parent else (wx, wy)
         if o.limit:
             lx, ly = clamp(lx, o.limit[0], o.limit[1]), clamp(ly, o.limit[2], o.limit[3])
@@ -822,8 +861,6 @@ class AppBase:
     def locked_props(self, o):
         """Properties that cannot be changed for this object (controllers and joysticks are restricted on purpose)."""
         k = o.kind
-        if o.pin:
-            return {"rotation"}                          # a pinned joint
         if o.ik:
             return {"rotation"}                          # driven by the IK solver
         if k == "ctrl":
@@ -835,7 +872,7 @@ class AppBase:
         if k in ("pill", "rsquare"):
             return {"rotation"}
         if o.limit:
-            return {"rotation", "scale"}
+            return {"scale", "rotation", "opacity"}
         return set()
 
     def is_joy(self, o):
@@ -854,12 +891,13 @@ class AppBase:
         f = f or self.frame
         return o.t_in <= f <= (o.t_out or self.total)
 
-    def layer_click(self, o):
+    def layer_click(self, o, order=None):
         """After Effects selection: Shift = range, Ctrl/Cmd = toggle only the clicked layer."""
         m = pygame.key.get_mods()
-        if m & pygame.KMOD_SHIFT and self.sel_anchor in self.objs:
-            a, b = self.objs.index(self.sel_anchor), self.objs.index(o)
-            rng = self.objs[min(a, b):max(a, b) + 1]
+        order = order or self.objs
+        if m & pygame.KMOD_SHIFT and self.sel_anchor in order and o in order:
+            a, b = order.index(self.sel_anchor), order.index(o)
+            rng = order[min(a, b):max(a, b) + 1]
             self.sel = rng if not m & (pygame.KMOD_CTRL | pygame.KMOD_META) else self.sel + [x for x in rng if x not in self.sel]
         elif m & (pygame.KMOD_CTRL | pygame.KMOD_META):
             self.select(o, True)
@@ -1123,6 +1161,9 @@ class AppBase:
         return True
 
     def eff_locked(self, o):
+        # Joystick knobs remain independently animatable when their rail/background is locked.
+        if o.limit and not o.locked and o.parent and o.parent.kind in ("pill", "rsquare"):
+            return False
         while o is not None:
             if o.locked:
                 return True
@@ -1899,27 +1940,76 @@ class AppBase:
             self.arrange_nodes()                               # tidy tree instead of a mess in the Schematic
         except Exception:  # noqa
             pass
-        self.msg("Body layers created and parented. Draw each part in its layer, move the anchors onto the joints, then use Do the Rig")
+        self.msg("Body drawing layers created. Draw the parts, then generate and edit the bone structure")
 
     def do_rig(self):
-        """Build the bones from the body layers (names, anchors, hierarchy) and put two-bone IK on arms and legs."""
+        """Attach drawing layers to the prepared bones and add IK to the limbs."""
         names = {n for n, _, _ in self.BODY_RIG}
         layers = [o for o in self.objs if not o.owner and o.kind == "vlayer" and (o.name in names or o in self.sel)]
         if len(layers) < 2:
             self.msg("Create the body layers first (Object > Generate Body Layers) or select your own parented layers")
             return
-        self.sel = layers
-        self.skeleton_from_selection()
+        bones = {b.name[:-5]: b for b in self.objs if b.kind == "bone" and b.name.endswith("_bone")}
+        matched = [(layer, bones[layer.name]) for layer in layers if layer.name in bones]
+        if len(matched) < 2:
+            self.msg("Generate Bones Structure first, then use Do the Rig")
+            return
+        for layer, bone in matched:
+            self.link(layer, bone, quiet=True)
+        self.rig_bones = {layer.name: bone for layer, bone in matched}
         n = 0
         for lower in ("Forearm_R", "Forearm_L", "Tibia_R", "Tibia_L"):
             b = self.rig_bones.get(lower)
-            if b and b.parent is not None and b.parent.kind == "bone":
+            if b and b.parent is not None and b.parent.kind == "bone" and not b.ik:
                 try:
                     self.create_ik(b)
                     n += 1
                 except Exception:  # noqa
                     pass
         self.msg(f"Rig done: {len(self.rig_bones)} bones, IK on {n} limbs. Use the Animate Bones tool to pose it")
+
+    def generate_bones_structure(self):
+        """Create an editable bone hierarchy that mirrors the selected drawing hierarchy."""
+        names = {n for n, _, _ in self.BODY_RIG}
+        layers = [o for o in self.objs if not o.owner and o.kind == "vlayer" and (o.name in names or o in self.sel)]
+        if len(layers) < 2:
+            self.msg("Create or select at least two drawing layers first")
+            return
+        layer_set = set(layers)
+        existing = {b.name[:-5]: b for b in self.objs if b.kind == "bone" and b.name.endswith("_bone")}
+        if all(layer.name in existing for layer in layers):
+            self.rig_bones = {layer.name: existing[layer.name] for layer in layers}
+            self.msg("Bone structure already exists. Edit the bones or use Do the Rig")
+            return
+        by_layer = {}
+        positions = {layer: self.world(layer, self.frame)[:2] for layer in layers}
+        # Build in parent order so each bone is parented under its matching bone.
+        pending = set(layers)
+        while pending:
+            ready = [layer for layer in layers if layer in pending and (layer.parent not in layer_set or layer.parent in by_layer)]
+            if not ready:
+                self.msg("Could not build bones: drawing hierarchy contains a cycle")
+                return
+            for layer in ready:
+                children = [child for child in layers if child.parent is layer]
+                start = positions[layer]
+                if children:
+                    # Most rigs have one child; branch bones use the first child
+                    # for the visible segment while all branches remain linked.
+                    end = positions[children[0]]
+                else:
+                    parent_bone = by_layer.get(layer.parent)
+                    angle = math.radians(self.world(parent_bone, self.frame)[3]) if parent_bone else -math.pi / 2
+                    end = (start[0] + math.cos(angle) * 40, start[1] + math.sin(angle) * 40)
+                bone = existing.get(layer.name) or self.make_bone(start, end, f"{layer.name}_bone")
+                parent_bone = by_layer.get(layer.parent)
+                if parent_bone and bone.parent is not parent_bone:
+                    self.link(bone, parent_bone, quiet=True)
+                by_layer[layer] = bone
+                pending.remove(layer)
+        self.rig_bones = {layer.name: by_layer[layer] for layer in layers}
+        self.sel = list(by_layer.values())
+        self.msg(f"Bone structure created: {len(by_layer)} bones. Edit and connect them, then use Do the Rig")
 
     def toggle_props(self, props, add=False):
         """P / R / T / S on the timeline show only those properties of the selected layers (like After Effects)."""
@@ -2652,7 +2742,8 @@ class AppBase:
 
     def icon_button(self, rect, icon, fn, active=False, hint=None, col=(235, 235, 235)):
         rc = self.flat_button(rect, fn, hint, active)
-        draw_icon(self.screen, icon, rc, col)
+        if not draw_ui_icon(self.screen, icon, rc, col, "active" if active else "default"):
+            draw_icon(self.screen, icon, rc, col)
         return rc
 
     def checkbox(self, x, y, on, fn, hint=None):
@@ -3071,7 +3162,7 @@ class AppBase:
         elif k == pygame.K_d and not ctrl:
             self.default_colors()
         elif k == pygame.K_x and not ctrl:
-            self.swap_colors()
+            self.swap_colors() if mods & pygame.KMOD_SHIFT else self.set_tool("bone_anim")
         elif k in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET) and (mods & pygame.KMOD_ALT):
             self.trim_at_playhead(k == pygame.K_RIGHTBRACKET)        # Alt+[ keeps the part right of the playhead, Alt+] the part left of it
         elif k in (pygame.K_DELETE, pygame.K_BACKSPACE) and self.frame_mode and self.fr_sel and self.r_tl.collidepoint(pos):
@@ -3128,7 +3219,12 @@ class AppBase:
         elif ctrl and k == pygame.K_s:
             self.save_project()
         elif ctrl and k == pygame.K_a:
-            self.sel = list(self.objs)
+            if self.r_tl.collidepoint(pos):
+                # Respect the current timeline search and type filter, then keep only visible rows.
+                self.sel = [row[1] for row in self.tl_rows() if row[0] == "o" and row[1].visible]
+                self.active_layer = self.sel[-1] if self.sel else None
+            else:
+                self.sel = list(self.objs)
         elif ctrl and k == pygame.K_d:
             self.duplicate_selected()
         elif ctrl and k == pygame.K_g:
@@ -3141,7 +3237,9 @@ class AppBase:
             self.start_replace(self.foot_sel)
         elif k == pygame.K_t and not ctrl and self.kf_sel and self.r_tl.collidepoint(pos):
             self.ease_pop = {"pos": pos}                                # T on selected keyframes: pick a curve from small pictures
-        elif not ctrl and (k == pygame.K_p or (k in (pygame.K_r, pygame.K_t, pygame.K_s, pygame.K_e, pygame.K_l)
+        elif not ctrl and k == pygame.K_s:
+            self.set_tool("bone")
+        elif not ctrl and (k == pygame.K_p or (k in (pygame.K_r, pygame.K_t, pygame.K_e, pygame.K_l)
                                                and self.r_tl.collidepoint(pygame.mouse.get_pos()))):      # P = Position values everywhere; R / T / S over the timeline
             m = {pygame.K_p: ("x", "y"), pygame.K_r: ("rotation",), pygame.K_t: ("opacity",), pygame.K_s: ("scale",)}
             if k in m:

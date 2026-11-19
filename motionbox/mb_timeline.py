@@ -9,6 +9,36 @@ EXTRA = 24         # empty frames shown after the last frame
 
 
 class TimelineMixin:
+    def draw_layer_type_icon(self, o, rect):
+        """Compact glyphs identify layers by their actual type."""
+        cx, cy = rect.center
+        col, d = (175, 178, 187), pygame.draw
+        names = {"bone": "layer_bone", "vlayer": "layer_drawing", "rlayer": "layer_raster",
+                 "image": "layer_image", "null": "layer_null", "peg": "layer_peg",
+                 "ctrl": "layer_controller", "ctrl_rot": "layer_controller", "ctrl_posrot": "layer_controller",
+                 "pill": "layer_joystick", "rsquare": "layer_joystick"}
+        if draw_ui_icon(self.screen, names.get(o.kind, "layer_layer"), rect, col):
+            return
+        if o.kind == "bone":
+            d.line(self.screen, col, (cx - 5, cy + 4), (cx + 5, cy - 4), 2)
+            d.circle(self.screen, col, (cx - 5, cy + 4), 3, 1)
+            d.circle(self.screen, col, (cx + 5, cy - 4), 3, 1)
+        elif o.kind in ("vlayer", "rlayer", "image"):
+            d.rect(self.screen, col, (cx - 7, cy - 6, 14, 12), 1, border_radius=2)
+            d.circle(self.screen, col, (cx + 3, cy - 3), 1)
+            d.lines(self.screen, col, False, [(cx - 5, cy + 4), (cx - 1, cy), (cx + 1, cy + 2), (cx + 4, cy - 1), (cx + 6, cy + 4)], 1)
+        elif o.kind in ("null", "peg"):
+            d.rect(self.screen, col, (cx - 6, cy - 6, 12, 12), 1, border_radius=3)
+            d.rect(self.screen, col, (cx - 2, cy - 2, 4, 4), 1, border_radius=1)
+        elif o.kind.startswith("ctrl"):
+            d.circle(self.screen, col, (cx, cy), 6, 1)
+            d.circle(self.screen, col, (cx, cy), 2)
+        elif o.kind in ("pill", "rsquare"):
+            d.rect(self.screen, col, (cx - 7, cy - 5, 14, 10), 1, border_radius=4)
+            d.circle(self.screen, col, (cx, cy), 2)
+        else:
+            d.rect(self.screen, col, (cx - 6, cy - 6, 12, 12), 1, border_radius=2)
+
     def obj_depth(self, o):
         d, p = 0, o.parent
         while p in self.objs and d < 20:
@@ -145,7 +175,9 @@ class TimelineMixin:
         self.goto(m["f"])
 
     def layer_press(self, o, my0, y0):
-        self.layer_click(o)
+        # Shift selection follows the layer rows currently displayed, including filters and nesting.
+        row_order = [row[1] for row in self.tl_rows() if row[0] == "o"]
+        self.layer_click(o, order=row_order)
         self.layer_double_click(o)
         moved = [False]
         self.autoscroll = "tl"
@@ -624,19 +656,20 @@ class TimelineMixin:
             self.rrect(pb_, COLOR_HOVER if self.hovering(pb_) else COLOR_BTN, 12)
             cx_, cy_ = pb_.center
             gc = (225, 225, 225)
-            if kind_ == "stretch":                                                    # an hourglass
-                pygame.draw.polygon(self.screen, gc, [(cx_ - 5, cy_ - 7), (cx_ + 5, cy_ - 7), (cx_, cy_)], 2)
-                pygame.draw.polygon(self.screen, gc, [(cx_ - 5, cy_ + 7), (cx_ + 5, cy_ + 7), (cx_, cy_)], 2)
-            elif kind_ == "repeat":                                                   # two arrows making a circle
-                pygame.draw.arc(self.screen, gc, (cx_ - 7, cy_ - 7, 14, 14), 0.3, 2.9, 2)
-                pygame.draw.arc(self.screen, gc, (cx_ - 7, cy_ - 7, 14, 14), 3.45, 6.05, 2)
-                pygame.draw.polygon(self.screen, gc, [(cx_ - 8, cy_ - 1), (cx_ - 4, cy_ - 1), (cx_ - 6, cy_ + 3)])
-                pygame.draw.polygon(self.screen, gc, [(cx_ + 8, cy_ + 1), (cx_ + 4, cy_ + 1), (cx_ + 6, cy_ - 3)])
-            else:                                                                     # two arrows going opposite ways
-                pygame.draw.line(self.screen, gc, (cx_ - 7, cy_ - 3), (cx_ + 6, cy_ - 3), 2)
-                pygame.draw.polygon(self.screen, gc, [(cx_ + 8, cy_ - 3), (cx_ + 3, cy_ - 7), (cx_ + 3, cy_ + 1)])
-                pygame.draw.line(self.screen, gc, (cx_ + 7, cy_ + 4), (cx_ - 6, cy_ + 4), 2)
-                pygame.draw.polygon(self.screen, gc, [(cx_ - 8, cy_ + 4), (cx_ - 3, cy_), (cx_ - 3, cy_ + 8)])
+            if not draw_ui_icon(self.screen, kind_, pygame.Rect(pb_.x + 7, pb_.y + 2, 24, 20), gc):
+                if kind_ == "stretch":                                                # an hourglass
+                    pygame.draw.polygon(self.screen, gc, [(cx_ - 5, cy_ - 7), (cx_ + 5, cy_ - 7), (cx_, cy_)], 2)
+                    pygame.draw.polygon(self.screen, gc, [(cx_ - 5, cy_ + 7), (cx_ + 5, cy_ + 7), (cx_, cy_)], 2)
+                elif kind_ == "repeat":                                               # two arrows making a circle
+                    pygame.draw.arc(self.screen, gc, (cx_ - 7, cy_ - 7, 14, 14), 0.3, 2.9, 2)
+                    pygame.draw.arc(self.screen, gc, (cx_ - 7, cy_ - 7, 14, 14), 3.45, 6.05, 2)
+                    pygame.draw.polygon(self.screen, gc, [(cx_ - 8, cy_ - 1), (cx_ - 4, cy_ - 1), (cx_ - 6, cy_ + 3)])
+                    pygame.draw.polygon(self.screen, gc, [(cx_ + 8, cy_ + 1), (cx_ + 4, cy_ + 1), (cx_ + 6, cy_ - 3)])
+                else:                                                                   # two arrows going opposite ways
+                    pygame.draw.line(self.screen, gc, (cx_ - 7, cy_ - 3), (cx_ + 6, cy_ - 3), 2)
+                    pygame.draw.polygon(self.screen, gc, [(cx_ + 8, cy_ - 3), (cx_ + 3, cy_ - 7), (cx_ + 3, cy_ + 1)])
+                    pygame.draw.line(self.screen, gc, (cx_ + 7, cy_ + 4), (cx_ - 6, cy_ + 4), 2)
+                    pygame.draw.polygon(self.screen, gc, [(cx_ - 8, cy_ + 4), (cx_ - 3, cy_), (cx_ - 3, cy_ + 8)])
             self.hit(pb_, lambda mx, my, k=kind_: self.time_op(k))
             if self.hovering(pb_):
                 self.hover_hint = hint_
@@ -746,12 +779,13 @@ class TimelineMixin:
                     self.hover_hint = "Layer label colour - click to change"
                 self.hit(dot, lambda mx, my, o=o: self.label_menu(o, (mx, my)))
                 pcl = self.push_clip((tl.x + 8, y, LCW, RH))
-                self.txt(self.objs.index(o) + 1, tl.x + 108, y + 6, self.f11, COLOR_MUTED)      # layer number
+                self.draw_layer_type_icon(o, pygame.Rect(tl.x + 108, y + 3, 16, 16))
+                self.txt(self.objs.index(o) + 1, tl.x + 128, y + 6, self.f11, COLOR_MUTED)      # layer number
                 rid = f"rename_{id(o)}"
                 if self.edit and self.edit.get("id") == rid:
-                    self.field((tl.x + 128, y + 1, LCW - 124, RH - 4), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
+                    self.field((tl.x + 148, y + 1, LCW - 144, RH - 4), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
                 else:
-                    nx_ = tl.x + 132 + 12 * min(self.obj_depth(o), 5)
+                    nx_ = tl.x + 152 + 12 * min(self.obj_depth(o), 5)
                     kids_ = any(c.parent is o and not self.is_controller(c) for c in self.objs)
                     self.txt(self.fit_text(o.name, self.f12, max(24, tl.x + LCW - (46 if kids_ else 26) - nx_)), nx_, y + 5)          # too long: ends with ...  and never runs into the fold arrow
                 if o.name in used_mattes:                          # this layer is the alpha of another layer
