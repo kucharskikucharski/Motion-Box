@@ -1448,13 +1448,13 @@ class CanvasMixin:
         return o.kind in ("peg", "null", "bone") or o.kind.startswith("ctrl")
 
     def port_y(self, nr):
-        if nr.h <= int(34 * self.nd_zoom):                    # a pill: ports in the middle
+        if nr.h <= 34:                                         # a pill: ports in the middle
             return nr.centery
-        return nr.y + int(36 * self.nd_zoom)
+        return nr.y + 18
 
     def nd_wheel(self, dy, pos):
         r, z0 = self.r_aux, self.nd_zoom
-        nz = clamp(z0 * (1.1 ** dy), 0.35, 2.5)
+        nz = clamp(z0 * (1.1 ** dy), 0.05, 2.5)
         wx, wy = (pos[0] - r.x - self.nd_ox) / z0, (pos[1] - r.y - self.nd_oy) / z0
         self.nd_ox, self.nd_oy, self.nd_zoom = pos[0] - r.x - wx * nz, pos[1] - r.y - wy * nz, nz
 
@@ -1535,7 +1535,7 @@ class CanvasMixin:
                     def lm(mx, my):
                         self.link_mouse = (mx, my)
                     return lm
-            tg = pygame.Rect(nr.right - int(26 * z), nr.y + 2, int(22 * z), int(20 * z))
+            tg = pygame.Rect(nr.right - 26, nr.y + 2, 22, 20)
             if tg.collidepoint(mx, my):
                 o.node_open = not o.node_open
                 return
@@ -1807,7 +1807,7 @@ class CanvasMixin:
             else:
                 self.txt(nm, nr.x + 13, ty + 1, self.fb, (0, 0, 0))
                 self.txt(nm, nr.x + 12, ty, self.fb, tc)
-            draw_icon(self.screen, "tri_d" if o.node_open else "tri_r", pygame.Rect(nr.right - int(26 * z), nr.y + 2, int(22 * z), hh), tc)
+            draw_icon(self.screen, "tri_d" if o.node_open else "tri_r", pygame.Rect(nr.right - 26, nr.y + 2, 22, hh), tc)
             self.txt(o.kind.capitalize(), nr.x + 12, nr.y + hh + 10, self.f11, COLOR_MUTED)
             if o.node_open:
                 self.node_thumb(o, pygame.Rect(nr.x + 12, nr.y + int(56 * z), nr.w - 24, nr.h - int(56 * z) - 12))

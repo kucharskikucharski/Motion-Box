@@ -903,6 +903,7 @@ class TimelineMixin:
                     if not moved[0] and math.hypot(mx - x0, my - y0) < 5:
                         return
                     moved[0] = True
+                    self.autoscroll = "tl"         # continue the marquee selection at the top or bottom edge
                     self.tl_marquee = pygame.Rect(min(x0, mx), min(y0, my), abs(mx - x0), abs(my - y0))
                     hit_ = [it for rc, it in self.kf_rects if rc.colliderect(self.tl_marquee)]
                     self.kf_sel = base + [it for it in hit_ if it not in base]
