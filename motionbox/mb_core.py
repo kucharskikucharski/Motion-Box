@@ -125,7 +125,7 @@ TOOL_INFO = {
 }
 # Każdy wpis SLOTS to przycisk Toolboxa: pierwszy identyfikator jest widoczny,
 # a kolejne stają się opcjami po przytrzymaniu przycisku.
-SLOTS = [["animate"], ["select"], ["anchor"],
+SLOTS = [["animate"], ["select"],
          ["rect", "ellipse", "polygon", "line", "multiline"], ["pen", "control_point_editor"], ["brush", "eraser"], ["fill"], ["text"], ["eyedropper"], None,
          ["scissors"], ["taper"], ["lipsync"], None,
          ["joy_x", "joy_y", "joy_xy"], ["ctrl", "ctrl_rot", "ctrl_posrot", "null", "peg"], ["bone", "bone_edit", "bone_anim", "bone_ik"], None,

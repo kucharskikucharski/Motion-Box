@@ -1439,8 +1439,10 @@ class CanvasMixin:
                 if all(abs(x - tx) >= 196 or abs(y - ty) >= 100 for tx, ty in taken):
                     o.node = [x, y]
                     break
+        # Zoom moves node positions, while their screen size and labels stay readable.
         return pygame.Rect(int(r.x + self.nd_ox + o.node[0] * z), int(r.y + self.nd_oy + o.node[1] * z),
-                           int((150 if self.is_pill(o) else 168) * z), int((30 if self.is_pill(o) else (112 if o.node_open else 56)) * z))
+                           150 if self.is_pill(o) else 168,
+                           30 if self.is_pill(o) else (112 if o.node_open else 56))
 
     def is_pill(self, o):
         return o.kind in ("peg", "null", "bone") or o.kind.startswith("ctrl")
@@ -1452,7 +1454,7 @@ class CanvasMixin:
 
     def nd_wheel(self, dy, pos):
         r, z0 = self.r_aux, self.nd_zoom
-        nz = clamp(z0 * (1.1 ** dy), 0.08, 2.5)
+        nz = clamp(z0 * (1.1 ** dy), 0.35, 2.5)
         wx, wy = (pos[0] - r.x - self.nd_ox) / z0, (pos[1] - r.y - self.nd_oy) / z0
         self.nd_ox, self.nd_oy, self.nd_zoom = pos[0] - r.x - wx * nz, pos[1] - r.y - wy * nz, nz
 
@@ -1650,7 +1652,9 @@ class CanvasMixin:
             return
         xs, ys = [o.node[0] for o in self.objs] + [-240], [o.node[1] for o in self.objs]
         bw, bh = max(xs) + 176 - min(xs), max(ys) + 120 - min(ys)
-        z = clamp(min((r.w - 64) / bw, (r.h - 136) / bh), 0.08, 1.5)
+        # Keep a useful minimum zoom. Large graphs can be panned instead of
+        # shrinking their nodes and text into an unreadable pile.
+        z = clamp(min((r.w - 64) / bw, (r.h - 136) / bh), 0.35, 1.0)
         self.nd_zoom = z
         self.nd_ox = (r.w - bw * z) / 2 - min(xs) * z
         self.nd_oy = 72 + ((r.h - 136) - bh * z) / 2 - min(ys) * z
@@ -1703,7 +1707,7 @@ class CanvasMixin:
 
     def table_rect(self):
         r, z = self.r_aux, self.nd_zoom
-        return pygame.Rect(int(r.x + self.nd_ox - 240 * z), int(r.y + self.nd_oy + 64 * z), int(168 * z), int(56 * z))
+        return pygame.Rect(int(r.x + self.nd_ox - 240 * z), int(r.y + self.nd_oy + 64 * z), 168, 56)
 
     def curve_pts(self, p0, p1):
         dx = max(40, abs(p1[0] - p0[0]) * 0.5)
@@ -1745,7 +1749,7 @@ class CanvasMixin:
         self.txt("SCHEMATIC", r.x + 24, r.y + 24, self.fb2)
         self.txt("Scroll = zoom   |   middle / Alt drag = pan   |   drag empty space = select   |   Del = delete",
                  r.x + 24, r.y + 48, self.f11, COLOR_MUTED)
-        z = self.nd_zoom
+        z = 1.0  # UI details are screen-sized; only node positions and the grid zoom.
         tb = self.table_rect()
         for o in self.objs:
             c = self.node_rect(o)
@@ -1884,13 +1888,41 @@ class CanvasMixin:
         if self.drawing_tab == "Colors":
             wide = area.w >= 560                                       # wide panel: palette on the left, the wheel fixed on the right
             if wide:
+                self.drawing_max = self.drawing_scroll = 0
                 wh = pygame.Rect(area.right - 258, area.y + 8, 240, 344)
                 bar = pygame.Rect(area.x, wh.bottom - 34, area.w - 270, 34)
                 pal = pygame.Rect(area.x, area.y, area.w - 270, max(80, bar.y - area.y - 6))
-            else:                                                     # narrow panel: palette above, the wheel fixed below it
+            elif area.h >= 400:                                       # enough height: palette above the fixed wheel
+                self.drawing_max = self.drawing_scroll = 0
                 wh = pygame.Rect(area.centerx - 120, area.bottom - 352, 240, 344)
                 bar = pygame.Rect(area.x, wh.y - 40, area.w, 34)
                 pal = pygame.Rect(area.x, area.y, area.w, max(80, bar.y - area.y - 6))
+            else:                                                       # short laptop panels: stack the palette, wheel and bar, then scroll
+                prev = self.push_clip(area)
+                self.hit_clip = area
+                try:
+                    y0 = area.y + 12 - int(self.drawing_scroll)
+                    end = self.draw_colors_tab(area, x, y0)
+                    wh = pygame.Rect(area.centerx - 120, end + 12 - int(self.drawing_scroll), 240, 344)
+                    dp = self.dock_picker
+                    rgb, a = self.color_get("fill")
+                    if tuple(hsv_to_rgb(dp["h"], dp["s"], dp["v"])) != tuple(rgb) and not self.drag:
+                        h, s_, v = rgb_to_hsv(rgb)
+                        if s_ > 0.001 and v > 0.001:
+                            dp["h"] = h
+                        dp["s"], dp["v"], dp["a"] = s_, v, a
+                    self.picker_body(dp, wh)
+                    bar = pygame.Rect(area.x, wh.bottom + 8, area.w, 34)
+                    self.draw_palette_bar(bar)
+                finally:
+                    self.hit_clip = None
+                    self.pop_clip(prev)
+                content = bar.bottom - area.y + int(self.drawing_scroll)
+                self.drawing_max = max(0, content - area.h)
+                self.drawing_scroll = clamp(self.drawing_scroll, 0, self.drawing_max)
+                self.pal_area = area
+                self.scrollbar(area, content, self.drawing_scroll)
+                return
             self.pal_area = pal
             prev = self.push_clip(pal)
             self.hit_clip = pal

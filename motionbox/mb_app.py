@@ -88,6 +88,7 @@ class AppBase:
         self.jwiz = None
         Obj.PHASE_HOOK = self.phase_from_slider
         self.pal_scroll, self.lvl_scroll, self.pal_max, self.lvl_max, self.pal_area = 0, 0, 0, 0, pygame.Rect(0, 0, 0, 0)
+        self.drawing_scroll, self.drawing_max = 0, 0
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -3032,7 +3033,9 @@ class AppBase:
             self.nd_wheel(dy, pos)
         elif self.r_aux and self.workspace == "Drawing" and self.r_aux.collidepoint(pos):
             if self.drawing_tab == "Colors":                                # each tab scrolls on its own
-                if self.pal_area.collidepoint(pos):
+                if self.drawing_max:
+                    self.drawing_scroll = clamp(self.drawing_scroll - dy * 40, 0, self.drawing_max)
+                elif self.pal_area.collidepoint(pos):
                     self.pal_scroll = clamp(self.pal_scroll - dy * 40, 0, self.pal_max)
             else:
                 self.lvl_scroll = clamp(self.lvl_scroll - dy * 40, 0, self.lvl_max)
