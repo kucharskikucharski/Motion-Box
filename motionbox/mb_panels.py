@@ -214,17 +214,19 @@ class PanelsMixin:
 
     def picker_body(self, p, b):
         """The colour wheel area (also used permanently inside the Drawing panel)."""
-        x = b.x + 16
+        s = min(1.0, max(0.65, (b.w - 32) / 208), max(0.65, (b.h - 24) / 344))
+        q = lambda value: max(1, int(round(value * s)))
+        x = b.x + q(16)
         self.ensure_hue_bar()
         # saturation / value square
-        sv = pygame.Rect(x, b.y + 44, 208, 176)
+        sv = pygame.Rect(x, b.y + q(44), q(208), q(176))
         if p["sv_h"] != p["h"]:
             t = pygame.Surface((2, 2))
             t.set_at((0, 0), (255, 255, 255))
             t.set_at((1, 0), hsv_to_rgb(p["h"], 1, 1))
             t.set_at((0, 1), (0, 0, 0))
             t.set_at((1, 1), (0, 0, 0))
-            p["sv_img"], p["sv_h"] = rounded_surface(pygame.transform.smoothscale(t, sv.size), 12), p["h"]
+            p["sv_img"], p["sv_h"] = rounded_surface(pygame.transform.smoothscale(t, sv.size), q(12)), p["h"]
         self.screen.blit(p["sv_img"], sv.topleft)
 
         def sv_start(mx, my):
@@ -236,17 +238,18 @@ class PanelsMixin:
         self.hit(sv, sv_start)
         cur = hsv_to_rgb(p["h"], p["s"], p["v"])
         mk = (int(sv.x + p["s"] * sv.w), int(sv.y + (1 - p["v"]) * sv.h))
-        pygame.draw.circle(self.screen, cur, mk, 7)
-        pygame.draw.circle(self.screen, (255, 255, 255), mk, 8, 3)
+        pygame.draw.circle(self.screen, cur, mk, q(7))
+        pygame.draw.circle(self.screen, (255, 255, 255), mk, q(8), q(3))
         # eyedropper
-        ey = pygame.Rect(x, b.y + 242, 32, 32)
+        ey = pygame.Rect(x, b.y + q(242), q(32), q(32))
         self.flat_button(ey, lambda mx, my: (setattr(self, "eyedrop", True), setattr(self, "eyedrop_p", p)), "Eyedropper: click any pixel on screen",
                          self.eyedrop)
-        pygame.draw.line(self.screen, (220, 220, 220), (ey.centerx - 6, ey.centery + 6), (ey.centerx + 3, ey.centery - 3), 3)
-        pygame.draw.circle(self.screen, (220, 220, 220), (ey.centerx + 5, ey.centery - 5), 4)
+        pygame.draw.line(self.screen, (220, 220, 220), (ey.centerx - q(6), ey.centery + q(6)), (ey.centerx + q(3), ey.centery - q(3)), q(3))
+        pygame.draw.circle(self.screen, (220, 220, 220), (ey.centerx + q(5), ey.centery - q(5)), q(4))
         # hue bar
-        hb = pygame.Rect(x + 40, b.y + 236, 168, 16)
-        self.screen.blit(self._hue_bar, hb.topleft)
+        hb = pygame.Rect(x + q(40), b.y + q(236), q(168), q(16))
+        hue_surface = self._hue_bar if self._hue_bar.get_size() == hb.size else pygame.transform.smoothscale(self._hue_bar, hb.size)
+        self.screen.blit(hue_surface, hb.topleft)
 
         def hue_start(mx, my):
             def u(mx, my):
@@ -255,20 +258,20 @@ class PanelsMixin:
             u(mx, my)
             return u
         self.hit(hb.inflate(0, 12), hue_start)
-        pygame.draw.circle(self.screen, hsv_to_rgb(p["h"], 1, 1), (int(hb.x + p["h"] * hb.w), hb.centery), 7)
-        pygame.draw.circle(self.screen, (255, 255, 255), (int(hb.x + p["h"] * hb.w), hb.centery), 8, 3)
+        pygame.draw.circle(self.screen, hsv_to_rgb(p["h"], 1, 1), (int(hb.x + p["h"] * hb.w), hb.centery), q(7))
+        pygame.draw.circle(self.screen, (255, 255, 255), (int(hb.x + p["h"] * hb.w), hb.centery), q(8), q(3))
         # alpha bar
-        ab = pygame.Rect(x + 40, b.y + 264, 168, 16)
-        if p.get("ab_key") != cur:
+        ab = pygame.Rect(x + q(40), b.y + q(264), q(168), q(16))
+        if p.get("ab_key") != (cur, ab.size):
             sf = pygame.Surface(ab.size)
-            for cx in range(0, ab.w, 8):
-                for cy in range(0, ab.h, 8):
-                    sf.fill((90, 90, 90) if (cx // 8 + cy // 8) % 2 else (60, 60, 60), (cx, cy, 8, 8))
+            for cx in range(0, ab.w, q(8)):
+                for cy in range(0, ab.h, q(8)):
+                    sf.fill((90, 90, 90) if (cx // q(8) + cy // q(8)) % 2 else (60, 60, 60), (cx, cy, q(8), q(8)))
             ov = pygame.Surface(ab.size, pygame.SRCALPHA)
             for cx in range(ab.w):
                 pygame.draw.line(ov, (*cur, int(255 * cx / ab.w)), (cx, 0), (cx, ab.h))
             sf.blit(ov, (0, 0))
-            p["ab_img"], p["ab_key"] = rounded_surface(sf, 8), cur
+            p["ab_img"], p["ab_key"] = rounded_surface(sf, q(8)), (cur, ab.size)
         self.screen.blit(p["ab_img"], ab.topleft)
 
         def a_start(mx, my):
@@ -279,17 +282,17 @@ class PanelsMixin:
             return u
         self.hit(ab.inflate(0, 12), a_start)
         ax = int(ab.x + p["a"] / 100 * ab.w)
-        pygame.draw.circle(self.screen, (255, 255, 255), (ax, ab.centery), 8, 3)
+        pygame.draw.circle(self.screen, (255, 255, 255), (ax, ab.centery), q(8), q(3))
         # hex + opacity
-        row = b.y + 296
-        self.rrect((x, row, 56, 32), COLOR_BTN, 8)
-        self.txt("Hex", x + 12, row + 9)
-        draw_icon(self.screen, "tri_d", pygame.Rect(x + 36, row + 8, 16, 16), (170, 170, 170))
-        self.field((x + 64, row, 88, 32), rgb_to_hex(cur), lambda s: self.picker_set_rgb(hex_to_rgb(s) or cur, p),
+        row = b.y + q(296)
+        self.rrect((x, row, q(56), q(32)), COLOR_BTN, q(8))
+        self.txt("Hex", x + q(12), row + q(9), self.f11)
+        draw_icon(self.screen, "tri_d", pygame.Rect(x + q(36), row + q(8), q(16), q(16)), (170, 170, 170))
+        self.field((x + q(64), row, q(88), q(32)), rgb_to_hex(cur), lambda s: self.picker_set_rgb(hex_to_rgb(s) or cur, p),
                    "pk_hex", hint="Hex colour, e.g. 1631A7")
-        self.field((x + 160, row, 32, 32), f"{p['a']:.0f}", lambda v: (p.__setitem__("a", clamp(v, 0, 100)), self.picker_apply(p)),
+        self.field((x + q(160), row, q(32), q(32)), f"{p['a']:.0f}", lambda v: (p.__setitem__("a", clamp(v, 0, 100)), self.picker_apply(p)),
                    "pk_a", numeric=True, center=True, hint="Opacity %")
-        self.txt("%", x + 196, row + 9, self.f11, COLOR_MUTED)
+        self.txt("%", x + q(196), row + q(9), self.f11, COLOR_MUTED)
 
     def draw_swatches(self, x, y):
         """Adobe-style Fill / Stroke: two overlapping squares, swap arrow, reset to defaults."""
@@ -340,16 +343,18 @@ class PanelsMixin:
         self.panel(r, "right")
         self.tabs(r.x, r.y, [("Properties", 80), ("Library", 72)], self.right_tab,
                   lambda n: setattr(self, "right_tab", n))
-        prev = self.push_clip(r)
+        content_clip = pygame.Rect(r.x, r.y + 28, r.w, max(0, r.h - 28))
+        prev = self.push_clip(content_clip)
         if self.right_tab == "Properties":                          # long panel: scroll with the wheel
             self.right_scroll = clamp(self.right_scroll, 0, self.right_max)
             self._content_end = 0
-            self.hit_clip = pygame.Rect(r.x, r.y + 26, r.w, r.h - 26)
+            self.hit_clip = content_clip
             try:
                 self.draw_properties(pygame.Rect(r.x, r.y - int(self.right_scroll), r.w, r.h))
             finally:
                 self.hit_clip = None
             self.right_max = max(0, int(self._content_end + self.right_scroll - (r.bottom - 10)))
+            self.scrollbar(content_clip, content_clip.h + self.right_max, self.right_scroll)
         else:
             self.draw_library(r)
         self.pop_clip(prev)
@@ -447,7 +452,8 @@ class PanelsMixin:
         y += 28
         for prop, label, factor in (("x", "X", 1), ("y", "Y", 1), ("scale", "Scale", 100),
                                     ("rotation", "Rotation", 1), ("opacity", "Opacity", 1)):
-            if prop in self.locked_props(o):
+            locked = prop in self.locked_props(o)
+            if locked and prop != "rotation":
                 continue
             current = self.val(o, prop, self.frame) * factor
             value_text = f"{current:.1f}" if prop == "scale" else f"{current:.0f}"
@@ -457,17 +463,22 @@ class PanelsMixin:
                 for target in (self.sel or [o]):
                     self.set_prop(target, prop, round(float(value) / factor, 3 if prop == "scale" else 1))
 
-            vr = self.field((x + 56, y, max(64, w - 92), 26), value_text, apply_value,
+            vr = self.field((x + 56, y, max(64, w - 92), 26), value_text,
+                            (lambda value: None) if locked else apply_value,
                             f"prop_{id(o)}_{prop}", numeric=True, center=False,
-                            hint="Click to type or drag horizontally to scrub", field_color=COLOR_ACCENT)
+                            hint="Driven by IK" if locked else "Click to type or drag horizontally to scrub", field_color=COLOR_FIELD)
             self.txt("%" if prop in ("scale", "opacity") else ("°" if prop == "rotation" else ""), vr.right + 4, y + 7, self.f11, COLOR_MUTED)
-            if not o.owner:
+            if not o.owner and not locked:
                 kr = pygame.Rect(x + w - 18, y + 3, 16, 20)
                 here = self.frame in o.keys[prop]
                 rdiamond(self.screen, kr.center, 6, COLOR_YELLOW if here else (150, 150, 150), bool(o.keys[prop]))
                 self.hit(kr, lambda mx, my, prop=prop: [self.toggle_prop_key(target, prop) for target in (self.sel or [o]) if not target.owner])
             y += 32
         y += 4
+        if o.kind not in ("bone", "vlayer", "rlayer", "image"):
+            self.button((x, y, w // 2 - 3, 28), "Flip Horizontal", lambda mx, my: self.flip_selected("x"), radius=8, font=self.f11)
+            self.button((x + w // 2 + 3, y, w // 2 - 3, 28), "Flip Vertical", lambda mx, my: self.flip_selected("y"), radius=8, font=self.f11)
+            y += 36
         self.divider(x, y, w)
         y += 12
         self.button((x, y, w, 34), "Click a parent..." if self.link_mode else "Link to Parent", self.toggle_link_mode,
@@ -490,11 +501,11 @@ class PanelsMixin:
             y += 44
         if self.is_joy(o) or o.kind.startswith("ctrl"):             # name shown above sliders / controllers
             self.txt("Label", x, y + 9, self.f11, COLOR_MUTED)
-            self.field((x + 56, y, w - 96, 32), o.caption, lambda s, o=o: setattr(o, "caption", s), "caption",
+            self.field((x + 56, y, w - 82, 32), o.caption, lambda s, o=o: setattr(o, "caption", s), "caption",
                        hint="Text shown above this slider / controller (what it controls)")
-            csw = pygame.Rect(x + w - 32, y, 32, 32)
-            self.rrect(csw, o.caption_color or (230, 230, 235), 16)
-            self.rrect(csw, (200, 200, 200), 16, 1)
+            csw = pygame.Rect(x + w - 22, y + 7, 18, 18)
+            self.rrect(csw, o.caption_color or (230, 230, 235), 9)
+            self.rrect(csw, (200, 200, 200), 9, 1)
             if self.hovering(csw):
                 self.hover_hint = "Colour of the label (so it never blends into the background)"
             self.hit(csw, lambda mx, my: self.open_picker("cap", (self.r_right.x - 248, y)))
@@ -531,14 +542,14 @@ class PanelsMixin:
                             active=self.align_to == key, font=self.f11, hint="Align to the artboard, or to the selected objects")
             y += 32
         kinds = ("left", "hcenter", "right", "top", "vcenter", "bottom")
-        bs = 34
-        gap = max(2, (w - 3 * bs) // 2)
+        bs = max(22, min(28, (w - 10) // 6))
+        gap = max(1, (w - 6 * bs) // 5)
         to = "the selected objects" if (len(self.sel) >= 2 and self.align_to == "selection") else "the artboard"
         for i, kind in enumerate(kinds):
-            rc = self.flat_button((x + (i % 3) * (bs + gap), y + (i // 3) * (bs + 6), bs, bs), lambda mx, my, k=kind: self.align(k),
+            rc = self.flat_button((x + i * (bs + gap), y, bs, bs), lambda mx, my, k=kind: self.align(k),
                                   {"hcenter": f"Centre horizontally on {to}", "vcenter": f"Centre vertically on {to}"}.get(kind, f"Align to the {kind} edge of {to}"))
             draw_arrange_icon(self.screen, kind, rc, (225, 225, 225))
-        y += 2 * (bs + 6) + 6
+        y += bs + 8
         if not o.owner and o.kind not in ("bone",) and not o.kind.startswith("ctrl") and not o.limit:
             self.divider(x, y, w)                                # alpha matte (e.g. an eye shape that masks the pupil); on a peg / null it masks everything under it
             y += 12

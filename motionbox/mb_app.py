@@ -180,7 +180,7 @@ class AppBase:
 
     def flip_selected(self, axis):
         """Mirror the selected shapes around the middle of the selection: axis x = left-right, y = top-bottom."""
-        objs = [s for s in self.sel if not s.locked and s.kind != "bone" and not s.kind.startswith("ctrl") and s.kind not in ("vlayer", "rlayer", "image")]
+        objs = [s for s in self.sel if not s.locked and s.kind != "bone" and s.kind not in ("vlayer", "rlayer", "image")]
         if not objs:
             self.msg("Select the shapes inside a drawing layer to flip them")
             return
@@ -880,7 +880,7 @@ class AppBase:
         if o.ik:
             return {"rotation"}                          # driven by the IK solver
         if k == "ctrl":
-            return {"scale", "rotation"}
+            return {"scale"}
         if k == "ctrl_rot":
             return {"x", "y", "scale"}
         if k == "ctrl_posrot":
@@ -3084,7 +3084,7 @@ class AppBase:
         elif self.r_left.w and self.r_left.collidepoint(pos) and self.left_tab == "Footage":
             self.foot_scroll = int(clamp(self.foot_scroll - dy, 0, max(0, len(self.footage) - 6)))
         elif self.r_right.w and self.r_right.collidepoint(pos) and self.right_tab == "Properties":
-            self.right_scroll = clamp(self.right_scroll - dy * 40, 0, self.right_max)
+            self.right_scroll = clamp(self.right_scroll - dy * 64, 0, self.right_max)
         elif self.r_right.collidepoint(pos) and self.right_tab == "Library":
             if self.lib_mode == "Explorer":
                 self.ex_scroll = int(clamp(self.ex_scroll - dy, 0, max(0, self.ex_n - 8)))

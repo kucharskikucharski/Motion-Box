@@ -66,7 +66,7 @@ class CanvasMixin:
         for i, hp in enumerate(hps):
             if not o.kind.startswith("ctrl") and o.kind != "bone" and abs(mx - hp[0]) <= 6 and abs(my - hp[1]) <= 6:
                 return ("resize", i)
-        if "rotation" in self.locked_props(o):              # joysticks / position controllers cannot be rotated
+        if "rotation" in self.locked_props(o):              # some controller types lock rotation
             return None
         for i in range(4):
             hp = hps[i]
@@ -1253,8 +1253,8 @@ class CanvasMixin:
                     self.draw_layer(o)
                     if o.caption:                                  # slider / controller name above the object
                         bp = self.box_pts(o, 6)
-                        self.scaled_text(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - int(16 * self.zoom),
-                                         self.f11, o.caption_color or (230, 230, 235), self.zoom, center=True)
+                        self.scaled_text(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - int(18 * self.zoom),
+                                         self.fb2, o.caption_color or (230, 230, 235), self.zoom, center=True)
         finally:
             if real_screen is not None:
                 self.screen, self.zoom, self.ox, self.oy = real_screen, rz, rox, roy
@@ -1913,12 +1913,12 @@ class CanvasMixin:
             wide = area.w >= 560                                       # wide panel: palette on the left, the wheel fixed on the right
             if wide:
                 self.drawing_max = self.drawing_scroll = 0
-                wh = pygame.Rect(area.right - 258, area.y + 8, 240, 344)
+                wh = pygame.Rect(area.right - 226, area.y + 8, 210, 300)
                 bar = pygame.Rect(area.x, wh.bottom - 34, area.w - 270, 34)
                 pal = pygame.Rect(area.x, area.y, area.w - 270, max(80, bar.y - area.y - 6))
             elif area.h >= 400:                                       # enough height: palette above the fixed wheel
                 self.drawing_max = self.drawing_scroll = 0
-                wh = pygame.Rect(area.centerx - 120, area.bottom - 352, 240, 344)
+                wh = pygame.Rect(area.centerx - 105, area.bottom - 308, 210, 300)
                 bar = pygame.Rect(area.x, wh.y - 40, area.w, 34)
                 pal = pygame.Rect(area.x, area.y, area.w, max(80, bar.y - area.y - 6))
             else:                                                       # short laptop panels: stack the palette, wheel and bar, then scroll
@@ -1927,7 +1927,7 @@ class CanvasMixin:
                 try:
                     y0 = area.y + 12 - int(self.drawing_scroll)
                     end = self.draw_colors_tab(area, x, y0)
-                    wh = pygame.Rect(area.centerx - 120, end + 12 - int(self.drawing_scroll), 240, 344)
+                    wh = pygame.Rect(area.centerx - 105, end + 12 - int(self.drawing_scroll), 210, 300)
                     dp = self.dock_picker
                     rgb, a = self.color_get("fill")
                     if tuple(hsv_to_rgb(dp["h"], dp["s"], dp["v"])) != tuple(rgb) and not self.drag:
