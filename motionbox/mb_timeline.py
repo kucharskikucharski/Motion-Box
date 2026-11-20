@@ -9,6 +9,11 @@ EXTRA = 24         # empty frames shown after the last frame
 
 
 class TimelineMixin:
+    def clear_timeline_search(self, mx=0, my=0):
+        self.tl_query = ""
+        self.edit = None
+        self.focus_area = "timeline"
+
     def draw_layer_type_icon(self, o, rect):
         """Compact glyphs identify layers by their actual type."""
         cx, cy = rect.center
@@ -111,16 +116,16 @@ class TimelineMixin:
         for i, it in enumerate(items):
             label, fn = it[0], it[1]
             rc = pygame.Rect(box.x + 4, box.y + 4 + i * 24, box.w - 8, 24)
-            if self.hovering(rc):
+            selected = len(it) > 3 and bool(it[3])
+            if selected:
+                self.rrect(rc, COLOR_ACCENT, 8)
+            elif self.hovering(rc):
                 self.rrect(rc, COLOR_HOVER, 8)
             if len(it) > 2 and it[2]:
                 pygame.draw.circle(self.screen, it[2], (rc.x + 14, rc.centery), 6)
                 self.txt(label, rc.x + 28, rc.y + 5)
             else:
                 self.txt(label, rc.x + 12, rc.y + 5)
-            if len(it) > 3 and it[3]:                                  # current choice
-                x0, y0 = rc.right - 18, rc.centery
-                pygame.draw.lines(self.screen, COLOR_ACCENT_L, False, [(x0, y0), (x0 + 4, y0 + 4), (x0 + 11, y0 - 5)], 2)
             self.hit(rc, lambda mx, my, fn=fn: self.run_ctx(fn))
 
     def run_ctx(self, fn):
@@ -632,10 +637,10 @@ class TimelineMixin:
         else:
             n_ = sum(1 for o in self.objs if self.tl_match(o))
             self.txt(f"{n_} found", fr_.right - 30, fr_.y + 5, self.f11, COLOR_MUTED, right=True)
-            xr_ = pygame.Rect(fr_.right - 24, fr_.y + 2, 20, 20)
+            xr_ = pygame.Rect(fr_.right - 30, fr_.y - 1, 28, 26)
             for a_, b_ in (((-3, -3), (3, 3)), ((-3, 3), (3, -3))):
                 pygame.draw.line(self.screen, (190, 190, 190), (xr_.centerx + a_[0], xr_.centery + a_[1]), (xr_.centerx + b_[0], xr_.centery + b_[1]), 2)
-            self.hit(xr_, lambda mx, my: (setattr(self, "tl_query", ""), setattr(self, "edit", None)))
+            self.hit(xr_, self.clear_timeline_search)
             if self.hovering(xr_):
                 self.hover_hint = "Clear the search"
         tb_ = pygame.Rect(tl.x + 170, sy + 1, 72, 24)

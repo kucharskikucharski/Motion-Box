@@ -13,6 +13,10 @@ FX_LIST = ["Blur", "Glow", "Drop Shadow", "Grain", "Tint", "Color Correction", "
 
 
 class CanvasMixin:
+    def tool_options_x(self, view):
+        """Start tool options 12 px from the toolbox, with a small inset from the viewer."""
+        return max(view.x + 4, self.r_tool.right + 12)
+
     # ------------------------------------------------------------ transforms
     def a2s(self, ax, ay):
         return (self.ox + ax * self.zoom, self.oy + ay * self.zoom)
@@ -691,8 +695,9 @@ class CanvasMixin:
         hints = {"auto_close": "Close every new stroke into a shape", "auto_fill": "Close and fill every new stroke with the fill colour",
                  "draw_under": "New strokes go under the existing ones in the layer"}
         w = sum(self.f12.size(n)[0] + 40 for _, n in items) + 112 + 120
-        self.rrect((v.x + 8, v.y + 8, w, 32), (30, 30, 34), 12)
-        cx = v.x + 20
+        x = self.tool_options_x(v)
+        self.rrect((x, v.y + 8, w, 32), (30, 30, 34), 12)
+        cx = x + 12
         for k, n in items:
             self.checkbox(cx, v.y + 16, self.brush_opts[k], lambda mx, my, k=k: self.brush_opts.__setitem__(k, not self.brush_opts[k]), hints[k])
             self.txt(n, cx + 24, v.y + 16)
@@ -775,21 +780,23 @@ class CanvasMixin:
 
     def draw_select_opts(self, v):
         # These settings constrain layer picking or make all drawing phases share one transform.
-        self.rrect((v.x + 8, v.y + 8, 410, 32), (30, 30, 34), 16)
-        self.layer_lock_checkbox(v.x + 20, v.y + 16)
-        self.checkbox(v.x + 170, v.y + 16, self.select_all_phases,
+        x = self.tool_options_x(v)
+        self.rrect((x, v.y + 8, 410, 32), (30, 30, 34), 16)
+        self.layer_lock_checkbox(x + 12, v.y + 16)
+        self.checkbox(x + 166, v.y + 16, self.select_all_phases,
                       lambda mx, my: setattr(self, "select_all_phases", not self.select_all_phases),
                       "Select the drawing layer so position, scale, rotation and opacity affect every phase")
-        self.txt("Select all phases", v.x + 194, v.y + 16)
+        self.txt("Select all phases", x + 190, v.y + 16)
 
     def draw_bone_opts(self, v):
-        self.rrect((v.x + 8, v.y + 8, 366, 32), (30, 30, 34), 16)
-        self.checkbox(v.x + 20, v.y + 16, self.show_active_bones,
+        x = self.tool_options_x(v)
+        self.rrect((x, v.y + 8, 366, 32), (30, 30, 34), 16)
+        self.checkbox(x + 12, v.y + 16, self.show_active_bones,
                       lambda mx, my: setattr(self, "show_active_bones", not self.show_active_bones),
                       "Show only the selected bone and its connected bone hierarchy")
-        self.txt("Show only active Bones", v.x + 44, v.y + 16)
+        self.txt("Show only active Bones", x + 36, v.y + 16)
         if self.tool == "bone_anim":
-            self.button((v.x + 248, v.y + 12, 112, 24), "Reset Pose", self.reset_bone_pose,
+            self.button((x + 204, v.y + 12, 112, 24), "Reset Pose", self.reset_bone_pose,
                         font=self.f11, hint="Key the skeleton back to its unanimated base pose at the playhead")
 
     def layer_lock_checkbox(self, x, y):
@@ -798,10 +805,11 @@ class CanvasMixin:
         self.txt("Only this layer", x + 24, y)
 
     def draw_animate_opts(self, v):
-        self.rrect((v.x + 8, v.y + 8, 450, 32), (30, 30, 34), 16)
-        self.layer_lock_checkbox(v.x + 316, v.y + 16)
+        x = self.tool_options_x(v)
+        self.rrect((x, v.y + 8, 450, 32), (30, 30, 34), 16)
+        self.layer_lock_checkbox(x + 306, v.y + 16)
         for i, (key, n) in enumerate((("peg", "Pegs"), ("ctrl", "Controllers"), ("both", "Both"))):
-            self.button((v.x + 14 + i * 96, v.y + 12, 90, 24), n, lambda mx, my, key=key: setattr(self, "animate_filter", key),
+            self.button((x + 10 + i * 96, v.y + 12, 90, 24), n, lambda mx, my, key=key: setattr(self, "animate_filter", key),
                         active=self.animate_filter == key, font=self.f11, hint="Animate tool: only these can be selected and moved")
 
     def snap_point(self, ax, ay, exclude=None):
@@ -921,7 +929,7 @@ class CanvasMixin:
         self.ctx = {"pos": (mx, my), "items": items}
 
     def draw_fill_opts(self, v):
-        x = v.x + 8
+        x = self.tool_options_x(v)
         self.rrect((x, v.y + 8, 320, 32), (30, 30, 34), 12)
         cx = x + 8
         for key, items in (("target", (("fill", "Fill"), ("stroke", "Stroke"), ("all", "All"))),
@@ -1067,12 +1075,13 @@ class CanvasMixin:
     def draw_ctrl(self, o, f, x, y, s, rot, op):
         """Linear controllers: arrows (position) and / or a rotation arc."""
         col, R, d = o.fill, o.w / 2, pygame.draw
+        line_w = max(1, int(4 * self.zoom * s))
 
         def P(px, py):
             return self.a2s(*self.xf(x, y, s, rot, px, py))
 
         def seg(a, b):
-            d.line(self.screen, col, P(*a), P(*b), 4)
+            d.line(self.screen, col, P(*a), P(*b), line_w)
         k = o.kind
         tip = R * (0.62 if k == "ctrl_posrot" else 0.95)
         if k in ("ctrl", "ctrl_posrot"):
@@ -1084,14 +1093,14 @@ class CanvasMixin:
                     seg((c * tip, sn * tip), (c * tip + math.cos(a2) * 0.26 * R, sn * tip + math.sin(a2) * 0.26 * R))
         if k in ("ctrl_rot", "ctrl_posrot"):
             rr = R * (0.92 if k == "ctrl_posrot" else 0.8)
-            d.lines(self.screen, col, False, [P(rr * math.cos(math.radians(a)), rr * math.sin(math.radians(a))) for a in range(-150, 71, 10)], 4)
+            d.lines(self.screen, col, False, [P(rr * math.cos(math.radians(a)), rr * math.sin(math.radians(a))) for a in range(-150, 71, 10)], line_w)
             ae = math.radians(70)
             ex, ey, tg = rr * math.cos(ae), rr * math.sin(ae), math.atan2(math.cos(ae), -math.sin(ae))
             for da in (150, -150):
                 a2 = tg + math.radians(da)
                 seg((ex, ey), (ex + math.cos(a2) * 0.26 * R, ey + math.sin(a2) * 0.26 * R))
         cx, cy = self.a2s(x, y)
-        d.circle(self.screen, col, (int(cx), int(cy)), 4)
+        d.circle(self.screen, col, (int(cx), int(cy)), max(1, int(4 * self.zoom * s)))
 
     def draw_tree(self, o, f=None, ghost=None):
         f = f or self.frame
@@ -1175,7 +1184,8 @@ class CanvasMixin:
         if o.kind == "bone":                                 # joints at both ends
             for lx_ in (0, o.w):
                 jx, jy = self.a2s(*self.xf(x, y, s, rot, lx_, 0))
-                pygame.draw.circle(self.screen, o.stroke, (int(jx), int(jy)), max(3, int(5 * self.zoom * s)), 2)
+                jr = max(1, int(5 * self.zoom * s))
+                pygame.draw.circle(self.screen, o.stroke, (int(jx), int(jy)), jr, max(1, int(2 * self.zoom * s)))
 
     def draw_image(self, o, f, x, y, s, rot, op):
         sf = self.footage_surface(o, f)
@@ -1243,7 +1253,8 @@ class CanvasMixin:
                     self.draw_layer(o)
                     if o.caption:                                  # slider / controller name above the object
                         bp = self.box_pts(o, 6)
-                        self.txt(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - 16, self.f11, o.caption_color or (230, 230, 235), center=True)
+                        self.scaled_text(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - int(16 * self.zoom),
+                                         self.f11, o.caption_color or (230, 230, 235), self.zoom, center=True)
         finally:
             if real_screen is not None:
                 self.screen, self.zoom, self.ox, self.oy = real_screen, rz, rox, roy
@@ -1735,12 +1746,15 @@ class CanvasMixin:
                         return o
         return None
 
-    def schematic_text(self, text, x, y, font, color, zoom):
-        """Draw graph labels at the same scale as their nodes."""
+    def scaled_text(self, text, x, y, font, color, zoom, center=False):
+        """Rasterize text at a uniform scale for graph labels and viewport overlays."""
         surface = font.render(str(text), True, color)
         size = (max(1, int(surface.get_width() * zoom)), max(1, int(surface.get_height() * zoom)))
         if size != surface.get_size():
             surface = pygame.transform.smoothscale(surface, size)
+        if center:
+            x -= size[0] // 2
+            y -= size[1] // 2
         self.screen.blit(surface, (int(x), int(y)))
 
     def draw_schematic(self, r):
@@ -1794,7 +1808,7 @@ class CanvasMixin:
                 if self.edit and self.edit.get("id") == rid:
                     self.field((nr.x + nr.h, nr.y + int(3 * z), nr.w - nr.h - int(10 * z), max(1, nr.h - int(6 * z))), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
                 else:
-                    self.schematic_text(self.fit_text(o.name, self.fb, 106), nr.x + nr.h + int(4 * z), nr.centery - int(8 * z), self.fb, (255, 255, 255), z)
+                    self.scaled_text(self.fit_text(o.name, self.fb, 106), nr.x + nr.h + int(4 * z), nr.centery - int(8 * z), self.fb, (255, 255, 255), z)
                 self.pop_clip(pc)
                 prd = max(1, int(6 * z))
                 pygame.draw.circle(self.screen, (230, 230, 230), (nr.right, self.port_y(nr)), prd)
@@ -1814,10 +1828,10 @@ class CanvasMixin:
             if self.edit and self.edit.get("id") == rid:
                 self.field((nr.x + int(6 * z), nr.y + int(3 * z), nr.w - int(40 * z), max(1, hh - int(2 * z))), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
             else:
-                self.schematic_text(nm, nr.x + int(13 * z), ty + int(z), self.fb, (0, 0, 0), z)
-                self.schematic_text(nm, nr.x + int(12 * z), ty, self.fb, tc, z)
+                self.scaled_text(nm, nr.x + int(13 * z), ty + int(z), self.fb, (0, 0, 0), z)
+                self.scaled_text(nm, nr.x + int(12 * z), ty, self.fb, tc, z)
             draw_icon(self.screen, "tri_d" if o.node_open else "tri_r", pygame.Rect(nr.right - int(26 * z), nr.y + int(2 * z), max(1, int(22 * z)), hh), tc)
-            self.schematic_text(o.kind.capitalize(), nr.x + int(12 * z), nr.y + hh + int(10 * z), self.f11, COLOR_MUTED, z)
+            self.scaled_text(o.kind.capitalize(), nr.x + int(12 * z), nr.y + hh + int(10 * z), self.f11, COLOR_MUTED, z)
             if o.node_open:
                 self.node_thumb(o, pygame.Rect(nr.x + int(12 * z), nr.y + int(56 * z), max(1, nr.w - int(24 * z)), max(1, nr.h - int(68 * z))))
             self.pop_clip(pc)
@@ -1837,8 +1851,8 @@ class CanvasMixin:
         pygame.draw.rect(self.screen, (84, 90, 110), (tb.x + int(2 * z), tb.y + int(2 * z), max(1, tb.w - int(4 * z)), th),
                          border_top_left_radius=max(1, int(6 * z)), border_top_right_radius=max(1, int(6 * z)))
         pct = self.push_clip(tb)
-        self.schematic_text("Table", tb.x + int(12 * z), tb.y + int(3 * z) + max(0, (th - int(14 * z)) // 2), self.fb, (255, 255, 255), z)
-        self.schematic_text("scene root", tb.x + int(12 * z), tb.y + th + int(10 * z), self.f11, COLOR_MUTED, z)
+        self.scaled_text("Table", tb.x + int(12 * z), tb.y + int(3 * z) + max(0, (th - int(14 * z)) // 2), self.fb, (255, 255, 255), z)
+        self.scaled_text("scene root", tb.x + int(12 * z), tb.y + th + int(10 * z), self.f11, COLOR_MUTED, z)
         self.pop_clip(pct)
         pygame.draw.circle(self.screen, (230, 230, 230), (tb.right, self.port_y(tb)), max(1, int(6 * z)))
         if self.nd_marquee:

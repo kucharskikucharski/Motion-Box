@@ -127,8 +127,8 @@ class StartMixin:
     def enter_start(self, tab="load"):
         self.mode, self.start_tab = "start", tab
         self.playing, self.edit, self.menu_open, self.dialog, self.picker, self.maxi = False, None, None, None, None, None
-        self.screen = pygame.display.set_mode((960, 640))
-        self.W, self.H = 960, 640
+        self.screen = pygame.display.set_mode((800, 540))
+        self.W, self.H = 800, 540
         self.start_scroll, self.start_sel, self.start_click, self.np_dd = 0, None, (None, 0), False
         self.start_projects = self.list_projects()
         if not hasattr(self, "np"):
@@ -156,18 +156,15 @@ class StartMixin:
         self.hits, self.hover_hint = [], None
         W, H = self.W, self.H
         self.screen.fill(COLOR_BG)
-        rpoly(self.screen, (10, 60, 120), [(36, 38), (50, 24), (64, 38), (50, 52)], 3)
-        rpoly(self.screen, COLOR_TEAL, [(36, 32), (50, 18), (64, 32), (50, 46)], 3)
-        self.txt("Motion Box", 80, 20, self.f20)
         for key, name, x in (("load", "OPEN PROJECT", 24), ("new", "NEW PROJECT", 184)):
-            rc = pygame.Rect(x, 64, 152, 32)
+            rc = pygame.Rect(x, 16, 152, 32)
             act = self.start_tab == key
             pygame.draw.rect(self.screen, COLOR_PANEL if act else COLOR_HEAD, rc, border_top_left_radius=12,
                              border_top_right_radius=12)
             self.txt(name, rc.centerx, rc.centery, self.fb if act else self.f12, COLOR_TEXT if act else COLOR_MUTED,
                      center=True)
             self.hit(rc, lambda mx, my, n=key: self.enter_start_tab(n))
-        panel = pygame.Rect(24, 96, W - 48, H - 96 - 24)
+        panel = pygame.Rect(24, 48, W - 48, H - 48 - 16)
         pygame.draw.rect(self.screen, COLOR_PANEL, panel, border_top_right_radius=12, border_bottom_left_radius=12,
                          border_bottom_right_radius=12)
         if self.start_tab == "load":
@@ -290,6 +287,22 @@ class StartMixin:
     def np_pick_fps(self, v):
         self.np["fps"], self.np_dd = v, False
 
+    def np_browse_path(self, mx=0, my=0):
+        """Choose a parent folder for the new project using the system folder picker."""
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            selected = filedialog.askdirectory(initialdir=self.np.get("path") or PROJECTS_DIR)
+            root.destroy()
+            if selected:
+                self.np["path"] = selected
+        except Exception as exc:  # noqa
+            self.msg(f"Could not open the folder picker: {exc}")
+
     def draw_start_new(self, p):
         np = self.np
         x, y = p.x + 32, p.y + 32
@@ -322,7 +335,9 @@ class StartMixin:
         self.np_dd_pos["fps"] = (fx, y + 36, 160)
         y += 56
         self.txt("Path", x, y + 9)
-        self.field((fx, y, fw, 32), np["path"], lambda s: np.__setitem__("path", s), "np_path")
+        browse_w = 88
+        self.field((fx, y, fw - browse_w - 8, 32), np["path"], lambda s: np.__setitem__("path", s), "np_path")
+        self.button((fx + fw - browse_w, y, browse_w, 32), "Browse…", self.np_browse_path, radius=8, font=self.f11)
         y += 48
         self.txt("The project folder gets: assets, graphics, palettes, scenes, scripts, renders, library", fx, y, self.f11, COLOR_MUTED)
         self.button((fx + fw - 120, p.bottom - 16 - 40, 120, 40), "Create", self.create_from_form,

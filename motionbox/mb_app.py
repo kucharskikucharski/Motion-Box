@@ -44,7 +44,7 @@ class AppBase:
         # tools / ui state
         self.tool, self.slot_tool = "select", {}
         self.flyout, self.press_slot = None, None
-        self.workspace, self.left_tab, self.right_tab = "Animate", "Edit", "Properties"
+        self.workspace, self.left_tab, self.right_tab = "Animate", "Footage", "Properties"
         self.link_mode, self.link_drag, self.link_mouse = False, None, (0, 0)
         self.drag, self.drag_end, self.btn = None, None, 1
         self.hits, self.row_rects, self.hover_hint = [], [], None
@@ -240,6 +240,10 @@ class AppBase:
 
     def create_from_dialog(self, kind):
         self.layer_dlg = False
+        if kind == "solid":
+            self.new_solid()
+            self.add_footage()
+            return
         if kind == "vlayer":
             self.new_layer("vlayer", True)
             return
@@ -755,7 +759,11 @@ class AppBase:
             dist = clamp(math.hypot(dx, dy), abs(L1 - L2) + 1e-3, L1 + L2 - 1e-3)
             c1 = clamp((L1 * L1 + dist * dist - L2 * L2) / (2 * L1 * dist), -1, 1)
             c2 = clamp((L1 * L1 + L2 * L2 - dist * dist) / (2 * L1 * L2), -1, 1)
-            sg = -1 if d.get("flip") else 1
+            keys = dict(getattr(upper, "ik_flip_keys", {}))
+            keys.update(getattr(lower, "ik_flip_keys", {}))
+            earlier = [frame for frame in keys if frame <= f]
+            flipped = keys[max(earlier)] if earlier else d.get("flip", False)
+            sg = -1 if flipped else 1
             if d["role"] == "upper":
                 pr = self.world(upper.parent, f)[3] if upper.parent else 0.0
                 return math.degrees(math.atan2(dy, dx) - sg * math.acos(c1)) - pr
@@ -775,9 +783,16 @@ class AppBase:
         self.msg(f"IK created: move '{c.name}' and the chain follows")
 
     def flip_ik(self, o):
-        for b in (o, self.find((o.ik or {}).get("other", ""))):
+        pair = (o, self.find((o.ik or {}).get("other", "")))
+        current = bool(o.ik.get("flip", False))
+        earlier = [frame for frame in o.ik_flip_keys if frame <= int(self.frame)]
+        if earlier:
+            current = bool(o.ik_flip_keys[max(earlier)])
+        value = not current
+        for b in pair:
             if b and b.ik:
-                b.ik["flip"] = not b.ik.get("flip", False)
+                b.ik_flip_keys[int(self.frame)] = value
+        self.msg(f"IK bend direction keyed at frame {int(self.frame)}")
 
     def remove_ik(self, o):
         other = self.find((o.ik or {}).get("other", ""))
@@ -1700,6 +1715,28 @@ class AppBase:
         n = len(self.footage)
         self.footage = [f for f in self.footage if f["id"] in used]
         self.msg(f"Removed {n - len(self.footage)} unused footage item(s)")
+
+    def create_project_folder(self):
+        """Create a named folder inside the current project's assets directory."""
+        try:
+            import tkinter.simpledialog as simpledialog
+            name = simpledialog.askstring("New project folder", "Folder name:")
+        except Exception:
+            name = None
+        if not name or not name.strip():
+            return
+        if not self.project_dir:
+            self.msg("Open a project before creating a project folder")
+            return
+        name = os.path.basename(name.strip())
+        path = os.path.join(self.project_dir, "assets", name)
+        try:
+            os.makedirs(path, exist_ok=False)
+            self.msg(f"Created project folder: {name}")
+        except FileExistsError:
+            self.msg("A folder with that name already exists")
+        except OSError as exc:
+            self.msg(f"Could not create folder: {exc}")
 
     def ex_seq_key(self, path):
         stem, ext = os.path.splitext(os.path.basename(path))
@@ -2635,7 +2672,7 @@ class AppBase:
         self.r_bar = pygame.Rect(0, H - BAR, W, BAR)
         self.r_tl = pygame.Rect(0, tl_top, W, TL)
         ph = max(160, tl_top - (8 if TL else 0) - 32 - 8 - TOP)
-        tw = 0 if "toolbox" in hid else 56
+        tw = 0 if "toolbox" in hid else 54
         self.r_tool = pygame.Rect(0, TOP, tw, max(0, tl_top - TOP))
         lw = 0 if "left" in hid else int(clamp(self.w_left, 160, 400))
         self.r_left = pygame.Rect(tw + 8 if tw else 8, TOP, lw, ph)
@@ -2759,10 +2796,10 @@ class AppBase:
         self.hit(rc.inflate(8, 8), fn)
         return rc
 
-    def field(self, rect, text, cb, fid, numeric=False, center=False, hint=None):
+    def field(self, rect, text, cb, fid, numeric=False, center=False, hint=None, field_color=COLOR_FIELD):
         rect = pygame.Rect(rect)
         editing = bool(self.edit and self.edit["id"] == fid)
-        self.rrect(rect, COLOR_FIELD, rect.h // 2)
+        self.rrect(rect, field_color, rect.h // 2)
         if editing:
             self.edit["rect"] = rect
             self.rrect(rect, COLOR_ACCENT_L, rect.h // 2, 1)
@@ -3468,10 +3505,12 @@ class AppBase:
         self.splitters = []
         for rc, kind, fn in specs:
             self.splitters.append((rc, kind))
-            if self.hovering(rc) or (self.drag is fn):
-                bar = pygame.Rect(0, 0, 4, 48) if kind == "sizewe" else pygame.Rect(0, 0, 48, 4)
-                bar.center = rc.center
-                self.rrect(bar, COLOR_HOVER, 2)
+            active = self.hovering(rc) or (self.drag is fn)
+            if kind == "sizewe":
+                edge = pygame.Rect(rc.centerx - (1 if active else 0), rc.y, 2 if active else 1, rc.h)
+            else:
+                edge = pygame.Rect(rc.x, rc.centery - (1 if active else 0), rc.w, 2 if active else 1)
+            self.screen.fill(COLOR_ACCENT if active else (48, 51, 66), edge)
             self.hit(rc, lambda mx, my, fn=fn: fn)
 
     def draw_frame(self):

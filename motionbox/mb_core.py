@@ -587,7 +587,7 @@ def ease_t(t, e):
 # ---------------------------------------------------------------- model
 FIELDS = ("name", "kind", "w", "h", "pts", "fill", "fill_on", "fill_a", "stroke_on", "stroke", "stroke_a",
           "stroke_w", "base", "expr", "visible", "locked", "render", "expanded", "label", "node", "phases",
-          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius", "sep_xy", "phase_src")
+          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius", "sep_xy", "phase_src", "ik_flip_keys")
 
 
 class Obj:
@@ -621,6 +621,7 @@ class Obj:
         self.owner = None         # the vector layer this shape belongs to
         self.surf, self.png = None, None      # raster layer pixels / saved png (assets/...)
         self.ik = None            # two-bone IK: {role, other, target, flip}
+        self.ik_flip_keys = {}    # frame -> bend direction; discrete, never interpolated
         self.caption_color = None
         self.matte_show = False   # keep the matte layer visible as well
         self.collapsed = False    # a group (parent) whose children are folded away in the timeline

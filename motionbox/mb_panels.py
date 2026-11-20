@@ -34,7 +34,7 @@ class PanelsMixin:
     def draw_toolbox(self):
         """One fixed column. Tools that do not fit (the timeline was dragged up) move into the arrow menu at the bottom."""
         top = self.r_tool.y
-        limit = self.r_tool.bottom - 92
+        limit = self.r_tool.bottom - 36
         y, hidden = top, []
         self.slot_pos = {}
         for i, slot in enumerate(SLOTS):
@@ -43,7 +43,7 @@ class PanelsMixin:
                 if slot:
                     hidden.append(slot)
                 continue
-            x = 13
+            x = 12
             if slot is None:
                 pygame.draw.line(self.screen, COLOR_LINE, (x, y + 4), (x + 30, y + 4))
                 y += 10
@@ -68,11 +68,11 @@ class PanelsMixin:
             self.hit(rc, lambda mx, my, i=i: self.slot_press(i))
             y += 34
         if hidden:
-            ar = pygame.Rect(13, limit, 30, 24)
+            ar = pygame.Rect(12, limit, 30, 24)
             self.flat_button(ar, lambda mx, my, h=hidden, a=ar: self.hidden_tools_menu(h, (a.right + 8, a.y)),
                              "More tools: there is not enough height for all of them")
             draw_icon(self.screen, "tri_d", ar, (200, 200, 205))
-        self.draw_swatches(12, min(y + 8, self.r_tool.bottom - 64))
+        # The toolbox is reserved for tools; colour controls live in the Drawing workspace.
 
     def hidden_tools_menu(self, hidden, pos):
         items = []
@@ -331,78 +331,8 @@ class PanelsMixin:
     def draw_left(self):
         r = self.r_left
         self.panel(r, "left")
-        self.tabs(r.x, r.y, [("Footage", 88), ("Edit", 72)], self.left_tab, lambda n: setattr(self, "left_tab", n))
         x, y, w = r.x + 16, r.y + 40, r.w - 32
-        if self.left_tab == "Footage":
-            self.draw_footage(r, x, y, w)
-            return
-        o = self.psel
-        if not o:
-            self.txt("Select an object to", x, y, self.f12, COLOR_MUTED)
-            self.txt("edit its values.", x, y + 20, self.f12, COLOR_MUTED)
-            y += 60
-            self.heading(x, y, "Rig", "characters")
-            self.button((x, y + 28, w, 32), "Generate body drawing layers", lambda mx, my: self.generate_body_layers(), font=self.f11,
-                        hint="Creates the named drawing layers and their hierarchy")
-            self.button((x, y + 66, w, 32), "Do the rig", lambda mx, my: self.do_rig(), font=self.f11,
-                        hint="Parents drawings to prepared bones and adds wrist / ankle IK")
-            self.button((x, y + 104, w, 32), "Generate Bones Structure", lambda mx, my: self.generate_bones_structure(), font=self.f11,
-                        hint="Creates editable bones with matching names and hierarchy; drawing layers stay separate")
-            return
-        self.txt(o.name if len(self.sel) == 1 else f"{len(self.sel)} objects", x, y, self.fb)
-        y += 32
-        prev = self.push_clip(r)
-        for p in PROPS:
-            if p in self.locked_props(o):
-                continue                                  # joysticks: no rotation; the knob follows the frame's scale
-            self.slider_row(x, y, w, o, p)
-            y += 48
-        k = self.button((x, y, w, 32), "Set Keyframe (K)", self.key_here, hint="Add or remove a keyframe on all properties")
-        draw_icon(self.screen, "key", pygame.Rect(k.x + 8, k.y + 8, 16, 16), (235, 235, 235))
-        self.pop_clip(prev)
-
-    def slider_row(self, x, y, w, o, p):
-        lo, hi = PROP_RANGE[p]
-        if p == "x":
-            hi = self.aw
-        elif p == "y":
-            hi = self.ah
-        if p in ("x", "y") and o.parent:
-            lo, hi = -1000, 1000
-        v = self.val(o, p, self.frame)
-        self.txt(PROP_LABEL[p], x, y + 4, self.f11, COLOR_MUTED)
-        if p in o.expr:
-            self.txt("fx", x + 72, y + 4, self.f11, COLOR_YELLOW)
-        fmt = f"{v:.2f}" if p == "scale" else f"{v:.0f}"
-
-        def commit(val, p=p, o=o):
-            self.set_prop(o, p, round(val, 2) if p == "scale" else round(val, 1))
-        self.field((x + w - 80, y - 4, 56, 24), fmt, commit, f"edit_{p}", numeric=True, center=True,
-                   hint="Click to type a value")
-        dc = (x + w - 8, y + 8)
-        keyed, here = bool(o.keys[p]), self.frame in o.keys[p]
-        if not o.owner:
-            rdiamond(self.screen, dc, 6, COLOR_YELLOW if here else (150, 150, 150), keyed)
-        if self.hovering(pygame.Rect(dc[0] - 10, dc[1] - 10, 20, 20)):
-            self.hover_hint = f"Keyframe {PROP_LABEL[p]} at this frame"
-        if not o.owner:
-            self.hit((dc[0] - 10, dc[1] - 10, 20, 20), lambda mx, my: self.toggle_prop_key(o, p))
-        tr = pygame.Rect(x, y + 28, w, 6)
-        self.rrect(tr, (60, 60, 60), 3)
-        t = clamp((v - lo) / (hi - lo), 0, 1)
-        self.rrect((tr.x, tr.y, int(tr.w * t), tr.h), COLOR_ACCENT_L, 3)
-        pygame.draw.circle(self.screen, (235, 235, 235), (tr.x + int(tr.w * t), tr.centery), 8)
-
-        def start(mx, my):
-            def upd(mx, my):
-                val = lo + (hi - lo) * clamp((mx - tr.x) / tr.w, 0, 1)
-                if pygame.key.get_mods() & pygame.KMOD_SHIFT:        # stepped values
-                    st = SHIFT_STEP[p]
-                    val = round(val / st) * st
-                self.set_prop(o, p, round(val, 2) if p == "scale" else round(val))
-            upd(mx, my)
-            return upd
-        self.hit(tr.inflate(16, 20), start)
+        self.draw_footage(r, x, y, w)
 
     # ------------------------------------------------------------- right panel
     def draw_right(self):
@@ -430,6 +360,15 @@ class PanelsMixin:
         on = not getattr(self.psel, field + "_on")
         for o in self.sel:
             setattr(o, field + "_on", on)
+
+    def reset_layer_transform(self, obj):
+        """Return the selected layers to their unanimated base transform at the playhead."""
+        for target in (self.sel or [obj]):
+            if target.owner:
+                continue
+            for prop in ("x", "y", "scale", "rotation", "opacity"):
+                if prop not in self.locked_props(target):
+                    self.set_prop(target, prop, target.base[prop])
 
     def paint_section(self, x, y, w, o, field):
         on = getattr(o, field + "_on")
@@ -499,6 +438,38 @@ class PanelsMixin:
         self.pop_clip(pcl)
         self.txt(f"Frame {self.frame}", x, y + 66, self.f11, COLOR_MUTED)
         y += 92
+        self.divider(x, y, w)
+        y += 10
+        self.txt("Layer Transform", x, y, self.fb)
+        reset = pygame.Rect(x + w - 52, y - 2, 52, 22)
+        self.txt("Reset", reset.x, reset.y + 4, self.f11, COLOR_ACCENT_L)
+        self.hit(reset, lambda mx, my, o=o: self.reset_layer_transform(o))
+        y += 28
+        for prop, label, factor in (("x", "X", 1), ("y", "Y", 1), ("scale", "Scale", 100),
+                                    ("rotation", "Rotation", 1), ("opacity", "Opacity", 1)):
+            if prop in self.locked_props(o):
+                continue
+            current = self.val(o, prop, self.frame) * factor
+            value_text = f"{current:.1f}" if prop == "scale" else f"{current:.0f}"
+            self.txt(label, x, y + 7, self.f11, COLOR_MUTED)
+
+            def apply_value(value, prop=prop, factor=factor):
+                for target in (self.sel or [o]):
+                    self.set_prop(target, prop, round(float(value) / factor, 3 if prop == "scale" else 1))
+
+            vr = self.field((x + 56, y, max(64, w - 92), 26), value_text, apply_value,
+                            f"prop_{id(o)}_{prop}", numeric=True, center=False,
+                            hint="Click to type or drag horizontally to scrub", field_color=COLOR_ACCENT)
+            self.txt("%" if prop in ("scale", "opacity") else ("°" if prop == "rotation" else ""), vr.right + 4, y + 7, self.f11, COLOR_MUTED)
+            if not o.owner:
+                kr = pygame.Rect(x + w - 18, y + 3, 16, 20)
+                here = self.frame in o.keys[prop]
+                rdiamond(self.screen, kr.center, 6, COLOR_YELLOW if here else (150, 150, 150), bool(o.keys[prop]))
+                self.hit(kr, lambda mx, my, prop=prop: [self.toggle_prop_key(target, prop) for target in (self.sel or [o]) if not target.owner])
+            y += 32
+        y += 4
+        self.divider(x, y, w)
+        y += 12
         self.button((x, y, w, 34), "Click a parent..." if self.link_mode else "Link to Parent", self.toggle_link_mode,
                     color=COLOR_ACCENT_L if self.link_mode else COLOR_BTN, radius=17, font=self.f12,
                     hint="Link: select children, press this, then click the object that should be their parent. "
@@ -513,7 +484,7 @@ class PanelsMixin:
             self.txt("Children: " + ", ".join(kids), x, y, self.f11, COLOR_MUTED)
             y += 24
         if o.ik:
-            self.button((x, y, w // 2 - 4, 32), "Flip IK", lambda mx, my, o=o: self.flip_ik(o), radius=8, hint="Bend the joint the other way")
+            self.button((x, y, w // 2 - 4, 32), "Invert IK · Key", lambda mx, my, o=o: self.flip_ik(o), radius=8, hint="Add a stepped keyframe for the bend direction")
             self.button((x + w // 2 + 4, y, w // 2 - 4, 32), "Remove IK", lambda mx, my, o=o: self.remove_ik(o), radius=8,
                         hint="Go back to rotating the bones by hand")
             y += 44
@@ -766,38 +737,79 @@ class PanelsMixin:
         self._ft_t = now
 
     def draw_footage(self, r, x, y, w):
-        self.button((x, y, w // 2 - 4, 32), "Import...", self.show_explorer,
-                    hint="Import: browse your disk in Library > Explorer, double-click a file")
-        self.button((x + w // 2 + 4, y, w // 2 - 4, 32), "+ Solid", self.new_solid,
-                    hint="New solid: a flat colour layer (uses the current fill colour)")
-        y += 40
-        area = pygame.Rect(r.x + 8, y, r.w - 16, r.bottom - y - 56)
-        self.hit(area, lambda mx, my: self.footage_empty_click())          # double-click on the empty area: open the explorer to import
-        if not self.footage:
-            self.txt("No footage yet.", x, y + 4, self.f12, COLOR_MUTED)
-            self.txt("Import images, sequences, video", x, y + 24, self.f11, COLOR_MUTED)
-            self.txt("or audio, or create a solid.", x, y + 40, self.f11, COLOR_MUTED)
+        selected = self.footage_by_id(self.foot_sel)
+        if selected:
+            sr = pygame.Rect(x, y, w, 44)
+            self.rrect(sr, COLOR_BTN, 8)
+            self.footage_thumb(selected, pygame.Rect(sr.x + 4, sr.y + 4, 36, 36))
+            self.txt(selected["name"][:22], sr.x + 48, sr.y + 5, self.fb)
+            self.txt(selected["type"].capitalize(), sr.x + 48, sr.y + 23, self.f11, COLOR_MUTED)
+            y += 50
+        search = pygame.Rect(x, y, w, 26)
+        self.field(search, self.foot_q, lambda s: setattr(self, "foot_q", s), "foot_search", hint="Search footage")
+        y += 32
+        area = pygame.Rect(r.x + 8, y, r.w - 16, r.bottom - y - 48)
+        self.hit(area, lambda mx, my: setattr(self, "ctx", {"pos": (mx, my), "items": [
+            ("Import…", self.show_explorer), ("Delete unused footage", self.delete_unused_footage)]}), (3,))
         used = {o.src for o in self.objs if o.src is not None}
         pc = self.push_clip(area)
-        for i, fo in enumerate(self.footage[self.foot_scroll:]):
-            rc = pygame.Rect(x, y + i * 44, w, 40)
-            if rc.y > area.bottom:
-                break
-            sel = fo["id"] == self.foot_sel or fo["id"] in self.foot_multi
-            self.rrect(rc, COLOR_ACCENT if sel else (COLOR_HOVER if self.hovering(rc) else COLOR_BTN), 8)
-            th = pygame.Rect(rc.x + 6, rc.y + 6, 40, 28)
-            self.footage_thumb(fo, th)
-            pcl = self.push_clip((rc.x + 52, rc.y, rc.w - 56, rc.h))
-            self.txt(fo["name"], rc.x + 52, rc.y + 4)
-            sub = {"image": f"Image {fo['w']}x{fo['h']}", "sequence": f"Sequence, {len(fo.get('files', []))} frames",
-                   "video": "Video (linked)", "audio": "Audio (linked)", "solid": "Solid"}[fo["type"]]
-            self.txt(sub + ("" if fo["id"] in used else "  - unused"), rc.x + 52, rc.y + 22, self.f11, COLOR_MUTED)
-            self.pop_clip(pcl)
-            self.hit(rc, lambda mx, my, fid=fo["id"]: self.footage_click(fid, mx, my))
-            self.hit(rc, lambda mx, my, fid=fo["id"]: self.footage_menu(fid, (mx, my)), (3,))
+        entries = [fo for fo in self.footage if not self.foot_q.strip() or self.foot_q.lower() in fo["name"].lower()]
+        if self.foot_view == "grid":
+            cw, ch, gap = max(72, (area.w - 12) // 2), 76, 8
+            start = self.foot_scroll * 2
+            visible = entries[start:]
+            cards = []
+            for i, fo in enumerate(visible):
+                col, row = i % 2, i // 2
+                rc = pygame.Rect(x + col * (cw + gap), y + row * (ch + gap), cw, ch)
+                if rc.y > area.bottom:
+                    break
+                cards.append((rc, fo))
+            for rc, fo in cards:
+                fid = fo["id"]
+                self.rrect(rc, COLOR_ACCENT if fid == self.foot_sel or fid in self.foot_multi else (COLOR_HOVER if self.hovering(rc) else COLOR_BTN), 8)
+                self.footage_thumb(fo, pygame.Rect(rc.x + 5, rc.y + 5, rc.w - 10, 42))
+                self.txt(fo["name"][:14], rc.x + 6, rc.y + 51, self.f11)
+                self.hit(rc, lambda mx, my, fid=fid: self.footage_click(fid, mx, my))
+                self.hit(rc, lambda mx, my, fid=fid: self.footage_menu(fid, (mx, my)), (3,))
+        else:
+            visible = entries[self.foot_scroll:]
+            for i, fo in enumerate(visible):
+                rc = pygame.Rect(x, y + i * 38, w, 34)
+                if rc.y > area.bottom:
+                    break
+                fid = fo["id"]
+                self.rrect(rc, COLOR_ACCENT if fid == self.foot_sel or fid in self.foot_multi else (COLOR_HOVER if self.hovering(rc) else COLOR_BTN), 7)
+                th = pygame.Rect(rc.x + 4, rc.y + 3, 36, 28)
+                self.footage_thumb(fo, th)
+                pcl = self.push_clip((rc.x + 46, rc.y, rc.w - 50, rc.h))
+                self.txt(fo["name"], rc.x + 48, rc.y + 2, self.f11)
+                self.txt(fo["type"].capitalize() + (" · unused" if fid not in used else ""), rc.x + 48, rc.y + 18, self.f11, COLOR_MUTED)
+                self.pop_clip(pcl)
+                self.hit(rc, lambda mx, my, fid=fid: self.footage_click(fid, mx, my))
+                self.hit(rc, lambda mx, my, fid=fid: self.footage_menu(fid, (mx, my)), (3,))
+        if not entries:
+            self.txt("No matching footage.", x + 4, y + 6, self.f11, COLOR_MUTED)
         self.pop_clip(pc)
-        self.button((x, r.bottom - 48, w, 32), "Add to Scene", lambda mx, my: self.add_footage_selected(), color=COLOR_ACCENT_L, radius=16,
-                    hint="Add the selected footage (Shift / Ctrl = several) to the scene, or double-click / drag it to the viewer. Right-click for more.")
+
+        bottom = r.bottom - 40
+        plus = pygame.Rect(x, bottom, 30, 28)
+        self.button(plus, "+", lambda mx, my: setattr(self, "ctx", {"pos": (mx, my), "items": [
+            ("Import…", self.show_explorer), ("New solid", self.new_solid),
+            ("New text", lambda: self.msg("Text items are not supported yet")),
+            ("New project folder", self.create_project_folder)]}), radius=8, hint="Create or import footage")
+        for i, (mode, label) in enumerate((("list", "≡"), ("grid", "▦"))):
+            self.button((x + 36 + i * 34, bottom, 30, 28), label,
+                        lambda mx, my, m=mode: setattr(self, "foot_view", m), active=self.foot_view == mode,
+                        radius=8, hint=f"{mode.capitalize()} view")
+        delete = pygame.Rect(x + 108, bottom, 30, 28)
+        self.button(delete, "×", lambda mx, my: self.delete_footage(self.foot_sel) if self.foot_sel is not None else None,
+                    radius=8, hint="Delete selected footage")
+        if self.foot_view == "grid":
+            rows = (len(entries) + 1) // 2
+            self.foot_scroll = int(clamp(self.foot_scroll, 0, max(0, rows - max(1, area.h // 84))))
+        else:
+            self.foot_scroll = int(clamp(self.foot_scroll, 0, max(0, len(entries) - max(1, area.h // 38))))
 
     def footage_thumb(self, fo, rc):
         self.rrect(rc, (22, 22, 24), 6)
@@ -905,10 +917,10 @@ class PanelsMixin:
         self.txt(f"F {self.frame} / {self.total}   {self.frame / self.fps:.2f}s", r.x + 16, r.centery - 7)
         qb = pygame.Rect(r.right - 204, r.centery - 14, 92, 28)                     # preview quality: lighter for a slow computer
         self.rrect(qb, COLOR_HOVER if self.hovering(qb) else COLOR_BTN, 14)
-        self.txt({1: "Full", 2: "1/2", 4: "1/4", 6: "1/6"}.get(self.preview_q, "Full"), qb.x + 14, qb.centery - 7, self.f11)
+        self.txt({1: "Full", 4: "1/4", 6: "1/6"}.get(self.preview_q, "Full"), qb.x + 14, qb.centery - 7, self.f11)
         self.caret(qb.right - 18, qb.centery, (205, 205, 205))
         self.hit(qb, lambda mx, my: setattr(self, "ctx", {"pos": (qb.x, qb.y - 8), "items": [
-            (n, (lambda q=q: setattr(self, "preview_q", q)), None, self.preview_q == q) for q, n in ((1, "Full"), (2, "1/2"), (4, "1/4"), (6, "1/6"))]}))
+            (n, (lambda q=q: setattr(self, "preview_q", q)), None, self.preview_q == q) for q, n in ((1, "Full"), (4, "1/4"), (6, "1/6"))]}))
         if self.hovering(qb):
             self.hover_hint = "Preview quality: 1/2, 1/4 or 1/6 draw the scene smaller and enlarge it - the program runs lighter. Rendering is always full quality"
         zb = pygame.Rect(r.right - 104, r.centery - 14, 92, 28)                     # zoom: a drop-down with the scale and Fit
@@ -1002,7 +1014,7 @@ class PanelsMixin:
             "Type": [("Add Text Layer", soon("Text Layer"), "", None), ("Character...", soon("Character"), "", None)],
             "Effects": [(n, soon(n), "", None) for n in ("Blur", "Glow", "Drop Shadow", "Grain", "Tint")] +
                        [None, ("Open Fx Workspace", lambda: setattr(self, "workspace", "Fx"), "", None)],
-            "View": [("Camera View (hide what is outside the artboard)", tog("camera"), "", V["camera"]), ("Safe Zone", tog("safe"), "", V["safe"]), ("Grid 3x3", tog("grid3"), "", V["grid3"]),
+            "View": [("Camera View", tog("camera"), "", V["camera"]), ("Safe Zone", tog("safe"), "", V["safe"]), ("Grid 3x3", tog("grid3"), "", V["grid3"]),
                      ("Grayscale", tog("gray"), "", V["gray"]), ("3D View", soon("3D View"), "", None),
                      ("Onion Skin", tog("onion"), "", V["onion"]), ("Render Preview", tog("render"), "", V["render"]), None,
                      ("Set Work Area In", lambda: setattr(self, "work_in", self.frame), "I", None),
@@ -1264,7 +1276,7 @@ class PanelsMixin:
     def draw_layer_dlg(self):
         if not self.layer_dlg:
             return
-        box = pygame.Rect(0, 0, 468, 270)
+        box = pygame.Rect(0, 0, 600, 270)
         box.center = (self.W // 2, self.H // 2)
         self.hit((0, 0, self.W, self.H), lambda mx, my: setattr(self, "layer_dlg", False))
         self.rrect(box, (32, 34, 40), 16)
@@ -1273,7 +1285,7 @@ class PanelsMixin:
         self.txt("New", box.x + 24, box.y + 20, self.f20)
         self.txt("What do you want to create?", box.x + 24, box.y + 52, self.f12, COLOR_MUTED)
         cards = (("vlayer", "Drawing", "A layer to draw", "shapes and strokes in"), ("peg", "Peg", "A parent that moves", "and turns its children"),
-                 ("null", "Null", "An invisible helper", "to parent things to"))
+                 ("null", "Null", "An invisible helper", "to parent things to"), ("solid", "Solid", "A flat colour", "background layer"))
         for i, (kind, title, d1, d2) in enumerate(cards):
             card = pygame.Rect(box.x + 24 + i * 140, box.y + 84, 132, 120)
             self.rrect(card, COLOR_HOVER if self.hovering(card) else COLOR_BTN, 12)
@@ -1286,6 +1298,9 @@ class PanelsMixin:
                 pygame.draw.circle(self.screen, col, (cx, cy), 13, 2)
                 pygame.draw.line(self.screen, col, (cx - 18, cy), (cx + 18, cy), 2)
                 pygame.draw.line(self.screen, col, (cx, cy - 18), (cx, cy + 18), 2)
+            elif kind == "solid":
+                self.rrect((cx - 18, cy - 14, 36, 28), COLOR_ACCENT_L, 4)
+                self.rrect((cx - 18, cy - 14, 36, 28), col, 4, 2)
             else:
                 self.rrect((cx - 14, cy - 14, 28, 28), col, 4, 2)
                 pygame.draw.line(self.screen, col, (cx - 8, cy), (cx + 8, cy), 2)
