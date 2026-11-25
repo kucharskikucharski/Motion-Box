@@ -13,6 +13,17 @@ FX_LIST = ["Blur", "Glow", "Drop Shadow", "Grain", "Tint", "Color Correction", "
 
 
 class CanvasMixin:
+    def tool_options_x(self, view):
+        """Center the active tool controls in the top bar, between toolbox and view toggles."""
+        start = max(view.x + 4, self.r_tool.right + 12)
+        end = view.right - 8 - 36 * 7 + 4 - 12
+        widths = {"brush": sum(self.f12.size(n)[0] + 40 for n in ("Auto close", "Auto fill", "Draw under")) + 232,
+                  "select": 360, "transform": 360, "animate": 452,
+                  "bone": 330, "bone_anim": 440, "bone_edit": 330, "bone_ik": 330,
+                  "fill": 320}
+        width = widths.get(self.tool, 320)
+        return max(start, min(end - width, (start + end - width) // 2))
+
     # ------------------------------------------------------------ transforms
     def a2s(self, ax, ay):
         return (self.ox + ax * self.zoom, self.oy + ay * self.zoom)
@@ -62,7 +73,7 @@ class CanvasMixin:
         for i, hp in enumerate(hps):
             if not o.kind.startswith("ctrl") and o.kind != "bone" and abs(mx - hp[0]) <= 6 and abs(my - hp[1]) <= 6:
                 return ("resize", i)
-        if "rotation" in self.locked_props(o):              # joysticks / position controllers cannot be rotated
+        if "rotation" in self.locked_props(o):              # some controller types lock rotation
             return None
         for i in range(4):
             hp = hps[i]
@@ -235,7 +246,7 @@ class CanvasMixin:
     def update_cursor(self):
         pos = pygame.mouse.get_pos()
         kind = "arrow"
-        inv = self.r_view.collidepoint(pos) and not self.dialog and self.menu_open is None
+        inv = self.maxi != "timeline" and self.r_view.collidepoint(pos) and not self.dialog and self.menu_open is None
         dn = getattr(self.drag, "__name__", "")
         sp = next((k for rc, k in self.splitters if rc.collidepoint(pos)), None)
         if self.eyedrop:
@@ -252,9 +263,9 @@ class CanvasMixin:
             kind = self.cursor_kind
         elif (self.tool == "hand" and inv) or (self.drag and self.btn == 2):
             kind = "hand"
-        elif inv and not self.drag and self.hover is not None and self.hover.kind.startswith("ctrl") and self.tool in ("select", "transform", "animate", "bone_anim"):
+        elif inv and not self.drag and self.hover is not None and self.hover.kind.startswith("ctrl") and self.tool in ("transform", "bone_anim"):
             kind = "rotate" if self.hover.kind == "ctrl_rot" else "move"       # a controller shows what it will do
-        elif inv and self.tool in ("select", "transform", "animate") and not self.drag:
+        elif inv and self.tool == "transform" and not self.drag:
             hh = self.handle_hit(*pos)
             if hh:
                 i = hh[1]
@@ -262,7 +273,7 @@ class CanvasMixin:
                                                            else "resize_v" if i in (4, 6) else "resize_h")
         elif inv and self.tool == "brush":                  # a circle that shows the brush size ([ and ] change it)
             kind = f"brush_{int(clamp(self.brush_px * self.zoom, 8, 120)) // 2 * 2}"
-        elif inv and self.tool not in ("select", "hand") and load_icon_state(self.tool, 30, "default")[0] is not None:   # no icon = normal arrow
+        elif inv and self.tool != "hand" and load_icon_state(self.tool, 30, "default")[0] is not None:
             kind = "tool_" + self.tool
         if kind != self.cursor_kind:
             self.cursor_kind = kind
@@ -412,15 +423,17 @@ class CanvasMixin:
             self.msg(f"{TOOL_INFO[tool][0]}: coming soon")
             return
         p0 = self.psel
-        gh = self.group_hit(mx, my) if tool in ("select", "transform") else None
+        gh = self.group_hit(mx, my) if tool == "transform" else None
         if gh:
             return self.start_group_scale(gh[1]) if gh[0] == "scale" else self.start_group_rotate(gh[1])
         rc_ = next((c for c in self.sel if c.kind == "ctrl_rot" and not c.locked), None)
-        if rc_ is not None and tool in ("select", "transform", "animate"):
+        if rc_ is not None and tool in ("transform", "animate"):
             pk = self.pick(mx, my)
             if pk is None or pk is rc_:                              # a rotation controller turns when you drag from anywhere
                 return self.start_rotate(rc_, key=self.auto_key)
-        hh = self.handle_hit(mx, my) if not (self.psel and self.psel.kind == "bone") else None
+        select_only_drawings = tool == "select"
+        non_drawing = lambda obj: obj.kind in ("bone", "ctrl", "ctrl_rot", "ctrl_posrot", "null", "peg")
+        hh = self.handle_hit(mx, my) if not (self.psel and (self.psel.kind == "bone" or (select_only_drawings and non_drawing(self.psel)))) else None
         if hh:
             if hh[0] == "radius":
                 return self.start_radius(self.psel)
@@ -438,18 +451,18 @@ class CanvasMixin:
             return
         if o is None:
             return self.start_marquee(mx, my, bool(shift))
-        # A level is one drawing layer; with this option on, select all its shapes together.
-        if self.select_whole_level and o.owner:
-            self.sel = list(o.owner.items)
-            self.msg(f"Selected the whole level ({len(self.sel)} shapes)")
+        if select_only_drawings and non_drawing(o):
             return
+        # Selecting the owner makes layer transforms affect every drawing phase together.
+        if self.select_all_phases and o.owner and o.owner.kind == "vlayer":
+            o = o.owner
         if shift:
             self.select(o, add=True)
             return
         if o.kind == "bone":                                         # Select only selects bones (Delete removes them)
             self.sel = [o] if o not in self.sel else self.sel
             return
-        if o.kind == "ctrl_rot":
+        if o.kind == "ctrl_rot" and not select_only_drawings:
             self.sel = [o]
             return self.start_rotate(o, key=self.auto_key)
         if o not in self.sel:
@@ -693,8 +706,8 @@ class CanvasMixin:
         hints = {"auto_close": "Close every new stroke into a shape", "auto_fill": "Close and fill every new stroke with the fill colour",
                  "draw_under": "New strokes go under the existing ones in the layer"}
         w = sum(self.f12.size(n)[0] + 40 for _, n in items) + 112 + 120
-        self.rrect((v.x + 8, v.y + 8, w, 32), (30, 30, 34), 12)
-        cx = v.x + 20
+        x = self.tool_options_x(v)
+        cx = x + 12
         for k, n in items:
             self.checkbox(cx, v.y + 16, self.brush_opts[k], lambda mx, my, k=k: self.brush_opts.__setitem__(k, not self.brush_opts[k]), hints[k])
             self.txt(n, cx + 24, v.y + 16)
@@ -776,20 +789,23 @@ class CanvasMixin:
         return {id(bone) for bone in connected}
 
     def draw_select_opts(self, v):
-        # These settings independently limit selection to one layer or expand it to the full level.
-        self.rrect((v.x + 8, v.y + 8, 364, 32), (30, 30, 34), 16)
-        self.layer_lock_checkbox(v.x + 20, v.y + 16)
-        self.checkbox(v.x + 170, v.y + 16, self.select_whole_level,
-                      lambda mx, my: setattr(self, "select_whole_level", not self.select_whole_level),
-                      "Clicking a shape selects every shape in its level")
-        self.txt("Select whole level", v.x + 194, v.y + 16)
+        # These settings constrain layer picking or make all drawing phases share one transform.
+        x = self.tool_options_x(v)
+        self.layer_lock_checkbox(x + 12, v.y + 16)
+        self.checkbox(x + 166, v.y + 16, self.select_all_phases,
+                      lambda mx, my: setattr(self, "select_all_phases", not self.select_all_phases),
+                      "Select the drawing layer so position, scale, rotation and opacity affect every phase")
+        self.txt("Select all phases", x + 190, v.y + 16)
 
     def draw_bone_opts(self, v):
-        self.rrect((v.x + 8, v.y + 8, 230, 32), (30, 30, 34), 16)
-        self.checkbox(v.x + 20, v.y + 16, self.show_active_bones,
+        x = self.tool_options_x(v)
+        self.checkbox(x + 12, v.y + 16, self.show_active_bones,
                       lambda mx, my: setattr(self, "show_active_bones", not self.show_active_bones),
                       "Show only the selected bone and its connected bone hierarchy")
-        self.txt("Show only active Bones", v.x + 44, v.y + 16)
+        self.txt("Show only active Bones", x + 36, v.y + 16)
+        if self.tool == "bone_anim":
+            self.button((x + 204, v.y + 12, 112, 24), "Reset Pose", self.reset_bone_pose,
+                        font=self.f11, hint="Key the skeleton back to its unanimated base pose at the playhead")
 
     def layer_lock_checkbox(self, x, y):
         self.checkbox(x, y, self.single_layer, lambda mx, my: setattr(self, "single_layer", not self.single_layer),
@@ -797,10 +813,10 @@ class CanvasMixin:
         self.txt("Only this layer", x + 24, y)
 
     def draw_animate_opts(self, v):
-        self.rrect((v.x + 8, v.y + 8, 450, 32), (30, 30, 34), 16)
-        self.layer_lock_checkbox(v.x + 316, v.y + 16)
+        x = self.tool_options_x(v)
+        self.layer_lock_checkbox(x + 306, v.y + 16)
         for i, (key, n) in enumerate((("peg", "Pegs"), ("ctrl", "Controllers"), ("both", "Both"))):
-            self.button((v.x + 14 + i * 96, v.y + 12, 90, 24), n, lambda mx, my, key=key: setattr(self, "animate_filter", key),
+            self.button((x + 10 + i * 96, v.y + 12, 90, 24), n, lambda mx, my, key=key: setattr(self, "animate_filter", key),
                         active=self.animate_filter == key, font=self.f11, hint="Animate tool: only these can be selected and moved")
 
     def snap_point(self, ax, ay, exclude=None):
@@ -920,8 +936,7 @@ class CanvasMixin:
         self.ctx = {"pos": (mx, my), "items": items}
 
     def draw_fill_opts(self, v):
-        x = v.x + 8
-        self.rrect((x, v.y + 8, 320, 32), (30, 30, 34), 12)
+        x = self.tool_options_x(v)
         cx = x + 8
         for key, items in (("target", (("fill", "Fill"), ("stroke", "Stroke"), ("all", "All"))),
                            ("mode", (("click", "Click"), ("rect", "Rect"), ("lasso", "Lasso")))):
@@ -1066,12 +1081,13 @@ class CanvasMixin:
     def draw_ctrl(self, o, f, x, y, s, rot, op):
         """Linear controllers: arrows (position) and / or a rotation arc."""
         col, R, d = o.fill, o.w / 2, pygame.draw
+        line_w = max(1, int(4 * self.zoom * s))
 
         def P(px, py):
             return self.a2s(*self.xf(x, y, s, rot, px, py))
 
         def seg(a, b):
-            d.line(self.screen, col, P(*a), P(*b), 4)
+            d.line(self.screen, col, P(*a), P(*b), line_w)
         k = o.kind
         tip = R * (0.62 if k == "ctrl_posrot" else 0.95)
         if k in ("ctrl", "ctrl_posrot"):
@@ -1083,17 +1099,34 @@ class CanvasMixin:
                     seg((c * tip, sn * tip), (c * tip + math.cos(a2) * 0.26 * R, sn * tip + math.sin(a2) * 0.26 * R))
         if k in ("ctrl_rot", "ctrl_posrot"):
             rr = R * (0.92 if k == "ctrl_posrot" else 0.8)
-            d.lines(self.screen, col, False, [P(rr * math.cos(math.radians(a)), rr * math.sin(math.radians(a))) for a in range(-150, 71, 10)], 4)
+            d.lines(self.screen, col, False, [P(rr * math.cos(math.radians(a)), rr * math.sin(math.radians(a))) for a in range(-150, 71, 10)], line_w)
             ae = math.radians(70)
             ex, ey, tg = rr * math.cos(ae), rr * math.sin(ae), math.atan2(math.cos(ae), -math.sin(ae))
             for da in (150, -150):
                 a2 = tg + math.radians(da)
                 seg((ex, ey), (ex + math.cos(a2) * 0.26 * R, ey + math.sin(a2) * 0.26 * R))
         cx, cy = self.a2s(x, y)
-        d.circle(self.screen, col, (int(cx), int(cy)), 4)
+        d.circle(self.screen, col, (int(cx), int(cy)), max(1, int(4 * self.zoom * s)))
 
     def draw_tree(self, o, f=None, ghost=None):
         f = f or self.frame
+        if o.kind == "comp" and o.comp_ref in getattr(self, "compositions", {}):
+            saved = self.objs
+            try:
+                self.objs = self.compositions[o.comp_ref]
+                settings = getattr(self, "comp_settings", {}).get(o.comp_ref, {})
+                bg = settings.get("color")
+                if bg:
+                    ax, ay = self.a2s(0, 0)
+                    pygame.draw.rect(self.screen, tuple(bg), (int(ax), int(ay),
+                                     max(1, int(settings.get("width", self.aw) * self.zoom)),
+                                     max(1, int(settings.get("height", self.ah) * self.zoom))))
+                for child in reversed(self.objs):
+                    if child.parent is o and child.visible and self.in_range(child, f):
+                        self.draw_layer(child, f)
+            finally:
+                self.objs = saved
+            return
         if o.kind == "vlayer":
             for it in reversed(o.items_at(f)):
                 if it.visible:
@@ -1174,7 +1207,8 @@ class CanvasMixin:
         if o.kind == "bone":                                 # joints at both ends
             for lx_ in (0, o.w):
                 jx, jy = self.a2s(*self.xf(x, y, s, rot, lx_, 0))
-                pygame.draw.circle(self.screen, o.stroke, (int(jx), int(jy)), max(3, int(5 * self.zoom * s)), 2)
+                jr = max(1, int(5 * self.zoom * s))
+                pygame.draw.circle(self.screen, o.stroke, (int(jx), int(jy)), jr, max(1, int(2 * self.zoom * s)))
 
     def draw_image(self, o, f, x, y, s, rot, op):
         sf = self.footage_surface(o, f)
@@ -1226,7 +1260,7 @@ class CanvasMixin:
         ab = pygame.Rect(int(ax0), int(ay0), int(self.aw * self.zoom), int(self.ah * self.zoom))
         pygame.draw.rect(self.screen, self.art_color, ab)
         src = self.matte_sources()
-        q = max(1, int(self.preview_q))                              # preview quality: the scene is drawn in a smaller picture and enlarged (lighter for the computer)
+        q = max(1, int(self.preview_q))                              # 1/2, 1/4 and 1/6 preview scales
         real_screen, small = None, None
         if q > 1:
             real_screen, rz, rox, roy = self.screen, self.zoom, self.ox, self.oy
@@ -1242,7 +1276,8 @@ class CanvasMixin:
                     self.draw_layer(o)
                     if o.caption:                                  # slider / controller name above the object
                         bp = self.box_pts(o, 6)
-                        self.txt(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - 16, self.f11, o.caption_color or (230, 230, 235), center=True)
+                        self.scaled_text(o.caption, sum(p[0] for p in bp) / 4, min(p[1] for p in bp) - int(18 * self.zoom),
+                                         self.fb2, o.caption_color or (230, 230, 235), self.zoom, center=True)
         finally:
             if real_screen is not None:
                 self.screen, self.zoom, self.ox, self.oy = real_screen, rz, rox, roy
@@ -1355,6 +1390,7 @@ class CanvasMixin:
             rc = pygame.Rect(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
             pygame.draw.rect(self.screen, BBOX_COL, rc, 1)
         self.pop_clip(prev)
+        self.rrect(pygame.Rect(v.x + 8, v.y + 8, max(0, v.w - 16), 40), COLOR_PANEL, 8)
         self.draw_view_icons(v)
         if self.tool == "brush":
             self.draw_brush_opts(v)
@@ -1378,7 +1414,7 @@ class CanvasMixin:
         items = [("render", "Render preview: show only layers enabled for render"), ("grid3", "Grid 3x3"),
                  ("safe", "Safe zone"), ("gray", "Grayscale"), ("onion", "Onion skin (selected layers and their children)"),
                  ("camera", "Camera view: hide everything outside the artboard"), ("threed", "3D view (coming soon)")]
-        x = v.right - 8 - 32 * len(items)
+        x = v.right - 8 - 36 * len(items) + 4
         col, d = (235, 235, 235), pygame.draw
         for key, hint in items:
             rc = pygame.Rect(x, v.y + 8, 32, 32)
@@ -1389,6 +1425,10 @@ class CanvasMixin:
                 if key == "onion":
                     self.hit(rc, lambda mx, my: setattr(self, "ctx", {"pos": (mx, my), "items": [(f"Previous frames: {n}", lambda n=n: self.onion.__setitem__("before", n)) for n in (0, 1, 2, 3, 5)] + [(f"Next frames: {n}", lambda n=n: self.onion.__setitem__("after", n)) for n in (0, 1, 2, 3, 5)]}), (3,))
             cx, cy = rc.center
+            state = "active" if self.view.get(key, False) else ("hover" if self.hovering(rc) else "default")
+            if draw_ui_icon(self.screen, f"view_{key}", rc.inflate(-8, -8), col, state):
+                x += 36
+                continue
             if key == "render":
                 self.eye_icon(cx, cy, col)
             elif key == "grid3":
@@ -1414,7 +1454,7 @@ class CanvasMixin:
                 d.lines(self.screen, col, True, pts, 2)
                 d.lines(self.screen, col, False, [(cx - 8, cy - 4), (cx, cy + 1), (cx + 8, cy - 4)], 2)
                 d.line(self.screen, col, (cx, cy + 1), (cx, cy + 9), 2)
-            x += 32
+            x += 36
 
     # ------------------------------------------------------------- aux panels
     def draw_aux(self):
@@ -1434,8 +1474,10 @@ class CanvasMixin:
                 if all(abs(x - tx) >= 196 or abs(y - ty) >= 100 for tx, ty in taken):
                     o.node = [x, y]
                     break
+        # A schematic zoom scales the graph geometry as one unit.
         return pygame.Rect(int(r.x + self.nd_ox + o.node[0] * z), int(r.y + self.nd_oy + o.node[1] * z),
-                           int((150 if self.is_pill(o) else 168) * z), int((30 if self.is_pill(o) else (112 if o.node_open else 56)) * z))
+                           max(1, int((150 if self.is_pill(o) else 168) * z)),
+                           max(1, int((30 if self.is_pill(o) else (112 if o.node_open else 56)) * z)))
 
     def is_pill(self, o):
         return o.kind in ("peg", "null", "bone") or o.kind.startswith("ctrl")
@@ -1447,7 +1489,7 @@ class CanvasMixin:
 
     def nd_wheel(self, dy, pos):
         r, z0 = self.r_aux, self.nd_zoom
-        nz = clamp(z0 * (1.1 ** dy), 0.08, 2.5)
+        nz = clamp(z0 * (1.1 ** dy), 0.05, 2.5)
         wx, wy = (pos[0] - r.x - self.nd_ox) / z0, (pos[1] - r.y - self.nd_oy) / z0
         self.nd_ox, self.nd_oy, self.nd_zoom = pos[0] - r.x - wx * nz, pos[1] - r.y - wy * nz, nz
 
@@ -1528,17 +1570,24 @@ class CanvasMixin:
                     def lm(mx, my):
                         self.link_mouse = (mx, my)
                     return lm
-            tg = pygame.Rect(nr.right - int(26 * z), nr.y + 2, int(22 * z), int(20 * z))
+            tg = pygame.Rect(nr.right - int(26 * z), nr.y + int(2 * z), max(1, int(22 * z)), max(1, int(20 * z)))
             if tg.collidepoint(mx, my):
                 o.node_open = not o.node_open
                 return
             if nr.collidepoint(mx, my):
+                now = pygame.time.get_ticks()
+                last = getattr(self, "_node_click", (None, 0))
+                self._node_click = (o, now)
+                if o.kind == "comp" and o.comp_ref in self.compositions and last[0] is o and now - last[1] < 400:
+                    self.set_active_comp(o.comp_ref)
+                    return
                 if mods & (pygame.KMOD_SHIFT | pygame.KMOD_CTRL | pygame.KMOD_META):
                     self.select(o, True)
                     return
                 if o not in self.sel:
                     self.sel = [o]
-                self.layer_double_click(o)                                # double-click the name = rename (the layer too)
+                if o.kind != "comp":
+                    self.layer_double_click(o)                            # double-click a normal node to rename it
                 self.reveal_in_timeline(o, center=True)                    # and the timeline shows this layer in the middle
                 items = []
                 for oo in self.sel:
@@ -1645,7 +1694,8 @@ class CanvasMixin:
             return
         xs, ys = [o.node[0] for o in self.objs] + [-240], [o.node[1] for o in self.objs]
         bw, bh = max(xs) + 176 - min(xs), max(ys) + 120 - min(ys)
-        z = clamp(min((r.w - 64) / bw, (r.h - 136) / bh), 0.08, 1.5)
+        # Fit the whole graph when possible; smaller views remain available by zooming out.
+        z = clamp(min((r.w - 64) / bw, (r.h - 136) / bh), 0.05, 1.5)
         self.nd_zoom = z
         self.nd_ox = (r.w - bw * z) / 2 - min(xs) * z
         self.nd_oy = 72 + ((r.h - 136) - bh * z) / 2 - min(ys) * z
@@ -1698,10 +1748,11 @@ class CanvasMixin:
 
     def table_rect(self):
         r, z = self.r_aux, self.nd_zoom
-        return pygame.Rect(int(r.x + self.nd_ox - 240 * z), int(r.y + self.nd_oy + 64 * z), int(168 * z), int(56 * z))
+        return pygame.Rect(int(r.x + self.nd_ox - 240 * z), int(r.y + self.nd_oy + 64 * z),
+                           max(1, int(168 * z)), max(1, int(56 * z)))
 
     def curve_pts(self, p0, p1):
-        dx = max(40, abs(p1[0] - p0[0]) * 0.5)
+        dx = max(40 * self.nd_zoom, abs(p1[0] - p0[0]) * 0.5)
         c1, c2 = (p0[0] + dx, p0[1]), (p1[0] - dx, p1[1])
         pts = []
         for i in range(21):
@@ -1711,8 +1762,9 @@ class CanvasMixin:
                         u ** 3 * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t ** 3 * p1[1]))
         return pts
 
-    def wire_at(self, mx, my, tol=6):
+    def wire_at(self, mx, my, tol=None):
         """The child whose wire to its parent passes under the mouse."""
+        tol = max(1, int(6 * self.nd_zoom)) if tol is None else tol
         for o in self.objs:
             if o.parent:
                 p, c = self.node_rect(o.parent), self.node_rect(o)
@@ -1725,6 +1777,17 @@ class CanvasMixin:
                         return o
         return None
 
+    def scaled_text(self, text, x, y, font, color, zoom, center=False):
+        """Rasterize text at a uniform scale for graph labels and viewport overlays."""
+        surface = font.render(str(text), True, color)
+        size = (max(1, int(surface.get_width() * zoom)), max(1, int(surface.get_height() * zoom)))
+        if size != surface.get_size():
+            surface = pygame.transform.smoothscale(surface, size)
+        if center:
+            x -= size[0] // 2
+            y -= size[1] // 2
+        self.screen.blit(surface, (int(x), int(y)))
+
     def draw_schematic(self, r):
         self.hit(r, self.schem_click, (1, 2))
         self.hit(r, self.schem_menu, (3,))
@@ -1733,25 +1796,25 @@ class CanvasMixin:
             if any(not r.colliderect(self.node_rect(o)) for o in self.objs):
                 self.nd_fit()
         prev = self.push_clip(r)
-        gs = max(8, int(32 * self.nd_zoom))
+        z = self.nd_zoom
+        gs = max(2, int(32 * z))
         for gx in range(r.x + int(self.nd_ox) % gs, r.right, gs):
             for gy in range(r.y + int(self.nd_oy) % gs, r.bottom, gs):
                 self.screen.set_at((gx, gy), (50, 50, 50))
         self.txt("SCHEMATIC", r.x + 24, r.y + 24, self.fb2)
         self.txt("Scroll = zoom   |   middle / Alt drag = pan   |   drag empty space = select   |   Del = delete",
                  r.x + 24, r.y + 48, self.f11, COLOR_MUTED)
-        z = self.nd_zoom
         tb = self.table_rect()
         for o in self.objs:
             c = self.node_rect(o)
             if o.parent:                                      # parent -> child, the arrow points at the child
                 p = self.node_rect(o.parent)
                 p0, p1 = (p.right, self.port_y(p)), (c.x, self.port_y(c))
-                col, w = ((255, 215, 70), 3) if (o is self.sel_wire or o is self.drop_wire) else ((150, 160, 220), 2)
+                col, w = ((255, 215, 70), max(1, int(3 * z))) if (o is self.sel_wire or o is self.drop_wire) else ((150, 160, 220), max(1, int(2 * z)))
             else:                                             # nodes without a parent hang on the Table
-                p0, p1, col, w = (tb.right, self.port_y(tb)), (c.x, self.port_y(c)), (70, 76, 100), 1
+                p0, p1, col, w = (tb.right, self.port_y(tb)), (c.x, self.port_y(c)), (70, 76, 100), max(1, int(z))
             pygame.draw.lines(self.screen, col, False, self.curve_pts(p0, p1), w)
-            rpoly(self.screen, col, [(p1[0] - 2, p1[1]), (p1[0] - 11, p1[1] - 5), (p1[0] - 11, p1[1] + 5)], 1)
+            rpoly(self.screen, col, [(p1[0] - 2 * z, p1[1]), (p1[0] - 11 * z, p1[1] - 5 * z), (p1[0] - 11 * z, p1[1] + 5 * z)], max(1, z))
         if self.link_drag:
             src, side = self.link_drag
             if src == "table":
@@ -1759,51 +1822,51 @@ class CanvasMixin:
             else:
                 nr = self.node_rect(src)
             if side == "out":
-                self.curve((nr.right, self.port_y(nr)), self.link_mouse, COLOR_TEAL)
+                self.curve((nr.right, self.port_y(nr)), self.link_mouse, COLOR_TEAL, max(1, int(2 * z)))
             else:
-                self.curve(self.link_mouse, (nr.x, self.port_y(nr)), COLOR_TEAL)
+                self.curve(self.link_mouse, (nr.x, self.port_y(nr)), COLOR_TEAL, max(1, int(2 * z)))
         for o in self.objs:
             nr = self.node_rect(o)
             sel = o in self.sel
             lc = self.label_color(o)
             if self.is_pill(o):                                    # peg / null / bone / controller: just a coloured pill with its name
-                self.rrect(nr, shade(lc, 0.62), nr.h // 2)
-                self.rrect(nr, (255, 255, 255) if sel else lc, nr.h // 2, 2)
+                self.rrect(nr, shade(lc, 0.62), max(1, int(nr.h / 2)))
+                self.rrect(nr, (255, 255, 255) if sel else lc, max(1, int(nr.h / 2)), max(1, int(2 * z)))
                 pc = self.push_clip(nr)
                 tid = "ctrl" if o.kind.startswith("ctrl") else o.kind
-                draw_tool_icon(self.screen, tid, pygame.Rect(nr.x + 4, nr.y, nr.h, nr.h), (255, 255, 255))
+                draw_tool_icon(self.screen, tid, pygame.Rect(nr.x + int(4 * z), nr.y, nr.h, nr.h), (255, 255, 255))
                 rid = f"rename_{id(o)}"
                 if self.edit and self.edit.get("id") == rid:
-                    self.field((nr.x + nr.h, nr.y + 3, nr.w - nr.h - 10, nr.h - 6), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
+                    self.field((nr.x + nr.h, nr.y + int(3 * z), nr.w - nr.h - int(10 * z), max(1, nr.h - int(6 * z))), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
                 else:
-                    self.txt(self.fit_text(o.name, self.fb, nr.w - nr.h - 14), nr.x + nr.h + 4, nr.centery - 8, self.fb, (255, 255, 255))
+                    self.scaled_text(self.fit_text(o.name, self.fb, 106), nr.x + nr.h + int(4 * z), nr.centery - int(8 * z), self.fb, (255, 255, 255), z)
                 self.pop_clip(pc)
-                prd = max(4, int(6 * z))
+                prd = max(1, int(6 * z))
                 pygame.draw.circle(self.screen, (230, 230, 230), (nr.right, self.port_y(nr)), prd)
                 pygame.draw.circle(self.screen, (230, 230, 230) if o.parent else (150, 150, 150), (nr.x, self.port_y(nr)), prd)
                 continue
-            rad = max(4, int(8 * z))
+            rad = max(1, int(8 * z))
             self.rrect(nr, (46, 48, 54), rad)
-            self.rrect(nr, lc if sel else (80, 80, 90), rad, 2)
-            hh = max(12, int(20 * z))
-            pygame.draw.rect(self.screen, shade(lc, 0.72), (nr.x + 2, nr.y + 2, nr.w - 4, hh), border_top_left_radius=max(3, int(6 * z)),
-                             border_top_right_radius=max(3, int(6 * z)))
+            self.rrect(nr, lc if sel else (80, 80, 90), rad, max(1, int(2 * z)))
+            hh = max(1, int(20 * z))
+            pygame.draw.rect(self.screen, shade(lc, 0.72), (nr.x + int(2 * z), nr.y + int(2 * z), max(1, nr.w - int(4 * z)), hh), border_top_left_radius=max(1, int(6 * z)),
+                             border_top_right_radius=max(1, int(6 * z)))
             pc = self.push_clip(nr)
             tc = (255, 255, 255)                           # names are always white, with a soft shadow
-            nm = self.fit_text(o.name, self.fb, nr.w - 56)
-            ty = nr.y + 3 + max(0, (hh - 14) // 2)
+            nm = self.fit_text(o.name, self.fb, 112)
+            ty = nr.y + int(3 * z) + max(0, (hh - int(14 * z)) // 2)
             rid = f"rename_{id(o)}"
             if self.edit and self.edit.get("id") == rid:
-                self.field((nr.x + 6, nr.y + 3, nr.w - 40, hh - 2), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
+                self.field((nr.x + int(6 * z), nr.y + int(3 * z), nr.w - int(40 * z), max(1, hh - int(2 * z))), o.name, lambda s, o=o: self.rename_obj(o, s), rid)
             else:
-                self.txt(nm, nr.x + 13, ty + 1, self.fb, (0, 0, 0))
-                self.txt(nm, nr.x + 12, ty, self.fb, tc)
-            draw_icon(self.screen, "tri_d" if o.node_open else "tri_r", pygame.Rect(nr.right - int(26 * z), nr.y + 2, int(22 * z), hh), tc)
-            self.txt(o.kind.capitalize(), nr.x + 12, nr.y + hh + 10, self.f11, COLOR_MUTED)
+                self.scaled_text(nm, nr.x + int(13 * z), ty + int(z), self.fb, (0, 0, 0), z)
+                self.scaled_text(nm, nr.x + int(12 * z), ty, self.fb, tc, z)
+            draw_icon(self.screen, "tri_d" if o.node_open else "tri_r", pygame.Rect(nr.right - int(26 * z), nr.y + int(2 * z), max(1, int(22 * z)), hh), tc)
+            self.scaled_text(o.kind.capitalize(), nr.x + int(12 * z), nr.y + hh + int(10 * z), self.f11, COLOR_MUTED, z)
             if o.node_open:
-                self.node_thumb(o, pygame.Rect(nr.x + 12, nr.y + int(56 * z), nr.w - 24, nr.h - int(56 * z) - 12))
+                self.node_thumb(o, pygame.Rect(nr.x + int(12 * z), nr.y + int(56 * z), max(1, nr.w - int(24 * z)), max(1, nr.h - int(68 * z))))
             self.pop_clip(pc)
-            prd = max(4, int(6 * z))
+            prd = max(1, int(6 * z))
             pygame.draw.circle(self.screen, (230, 230, 230), (nr.right, self.port_y(nr)), prd)
             pygame.draw.circle(self.screen, (230, 230, 230) if o.parent else (150, 150, 150), (nr.x, self.port_y(nr)), prd)
         if self.link_drag:                                   # highlight the node the wire will connect to
@@ -1811,20 +1874,21 @@ class CanvasMixin:
             tgt = next((o for o in self.objs if o is not src and self.node_rect(o).collidepoint(self.link_mouse)), None)
             if tgt:
                 nr = self.node_rect(tgt)
-                self.rrect(nr.inflate(10, 10), (255, 215, 70), max(6, int(12 * z)), 3)
-                pygame.draw.circle(self.screen, (255, 215, 70), (nr.x if side == "out" else nr.right, self.port_y(nr)), max(7, int(11 * z)))
-        self.rrect(tb, (46, 48, 54), max(4, int(8 * z)))                    # the Table: the root of the scene
-        self.rrect(tb, (130, 138, 160), max(4, int(8 * z)), 2)
-        pygame.draw.rect(self.screen, (84, 90, 110), (tb.x + 2, tb.y + 2, tb.w - 4, max(12, int(20 * z))),
-                         border_top_left_radius=max(3, int(6 * z)), border_top_right_radius=max(3, int(6 * z)))
+                self.rrect(nr.inflate(int(10 * z), int(10 * z)), (255, 215, 70), max(1, int(12 * z)), max(1, int(3 * z)))
+                pygame.draw.circle(self.screen, (255, 215, 70), (nr.x if side == "out" else nr.right, self.port_y(nr)), max(1, int(11 * z)))
+        self.rrect(tb, (46, 48, 54), max(1, int(8 * z)))                    # the Table: the root of the scene
+        self.rrect(tb, (130, 138, 160), max(1, int(8 * z)), max(1, int(2 * z)))
+        th = max(1, int(20 * z))
+        pygame.draw.rect(self.screen, (84, 90, 110), (tb.x + int(2 * z), tb.y + int(2 * z), max(1, tb.w - int(4 * z)), th),
+                         border_top_left_radius=max(1, int(6 * z)), border_top_right_radius=max(1, int(6 * z)))
         pct = self.push_clip(tb)
-        self.txt("Table", tb.x + 12, tb.y + 3 + max(0, (max(12, int(20 * z)) - 14) // 2), self.fb, (255, 255, 255))
-        self.txt("scene root", tb.x + 12, tb.y + max(12, int(20 * z)) + 10, self.f11, COLOR_MUTED)
+        self.scaled_text("Table", tb.x + int(12 * z), tb.y + int(3 * z) + max(0, (th - int(14 * z)) // 2), self.fb, (255, 255, 255), z)
+        self.scaled_text("scene root", tb.x + int(12 * z), tb.y + th + int(10 * z), self.f11, COLOR_MUTED, z)
         self.pop_clip(pct)
-        pygame.draw.circle(self.screen, (230, 230, 230), (tb.right, self.port_y(tb)), max(4, int(6 * z)))
+        pygame.draw.circle(self.screen, (230, 230, 230), (tb.right, self.port_y(tb)), max(1, int(6 * z)))
         if self.nd_marquee:
             x1, y1, x2, y2 = self.nd_marquee
-            pygame.draw.rect(self.screen, COLOR_TEAL, (min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)), 1)
+            pygame.draw.rect(self.screen, COLOR_TEAL, (min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)), max(1, int(z)))
         bar = pygame.Rect(r.x + 8, r.bottom - 48, r.w - 16, 40)          # bottom toolbar
         self.rrect(bar, COLOR_TL, 12)
         x = bar.x + 8
@@ -1870,57 +1934,17 @@ class CanvasMixin:
         pygame.draw.rect(self.screen, (125, 125, 136), (track.x, ty, 4, th), border_radius=2)
 
     def draw_levelstrip(self, r):
-        """Drawing workspace: two tabs. Colors = scrolling palette + a colour wheel that never scrolls. Level Strip = the drawings of the layer."""
-        x = r.x + 24
-        for i, n in enumerate(("Colors", "Level Strip")):
-            self.button((x + i * 116, r.y + 16, 108, 28), n, lambda mx, my, n=n: setattr(self, "drawing_tab", n),
-                        active=self.drawing_tab == n, font=self.f11)
-        area = pygame.Rect(r.x, r.y + 52, r.w, r.h - 52)
-        if self.drawing_tab == "Colors":
-            wide = area.w >= 560                                       # wide panel: palette on the left, the wheel fixed on the right
-            if wide:
-                wh = pygame.Rect(area.right - 258, area.y + 8, 240, 344)
-                bar = pygame.Rect(area.x, wh.bottom - 34, area.w - 270, 34)
-                pal = pygame.Rect(area.x, area.y, area.w - 270, max(80, bar.y - area.y - 6))
-            else:                                                     # narrow panel: palette above, the wheel fixed below it
-                wh = pygame.Rect(area.centerx - 120, area.bottom - 352, 240, 344)
-                bar = pygame.Rect(area.x, wh.y - 40, area.w, 34)
-                pal = pygame.Rect(area.x, area.y, area.w, max(80, bar.y - area.y - 6))
-            self.pal_area = pal
-            prev = self.push_clip(pal)
-            self.hit_clip = pal
-            try:
-                ed_ = self.edit.get("id", "") if self.edit else ""
-                if ed_ == "palfolder" or ed_.startswith("palname_"):
-                    self.pal_scroll = 0
-                y0 = pal.y + 12 - int(self.pal_scroll)
-                end = self.draw_colors_tab(pal, x, y0)
-            finally:
-                self.hit_clip = None
-                self.pop_clip(prev)
-            content = end - y0 + 24
-            self.pal_max = max(0, content - pal.h)
-            self.pal_scroll = clamp(self.pal_scroll, 0, self.pal_max)
-            self.scrollbar(pal, content, self.pal_scroll)
-            if pal.collidepoint(pygame.mouse.get_pos()):               # the frame shows that this list scrolls on its own
-                pygame.draw.rect(self.screen, COLOR_ACCENT_L, pal.inflate(-8, -2), 1, border_radius=6)
-            self.draw_palette_bar(bar)
-            prev = self.push_clip(wh.inflate(8, 8).clip(area))
-            dp = self.dock_picker                                      # the wheel is bound to the fill colour
-            rgb, a = self.color_get("fill")
-            if tuple(hsv_to_rgb(dp["h"], dp["s"], dp["v"])) != tuple(rgb) and not self.drag:
-                h, s_, v = rgb_to_hsv(rgb)
-                if s_ > 0.001 and v > 0.001:
-                    dp["h"] = h
-                dp["s"], dp["v"], dp["a"] = s_, v, a
-            self.picker_body(dp, wh)
-            self.pop_clip(prev)
-        else:
+        """Colors and the Level Strip share a tabbed panel."""
+        self.rrect(r, COLOR_PANEL, 8)
+        self.tabs(r.x, r.y, [("Colors", 84), ("Level Strip", 100)], self.drawing_tab,
+                  lambda n: setattr(self, "drawing_tab", n))
+        area = pygame.Rect(r.x, r.y + 24, r.w, max(0, r.h - 24))
+        if self.drawing_tab != "Colors":
             prev = self.push_clip(area)
             self.hit_clip = area
             try:
                 y0 = area.y + 12 - int(self.lvl_scroll)
-                end = self.draw_level_tab(area, x, y0)
+                end = self.draw_level_tab(area, area.x + 24, y0)
             finally:
                 self.hit_clip = None
                 self.pop_clip(prev)
@@ -1928,18 +1952,70 @@ class CanvasMixin:
             self.lvl_max = max(0, content - area.h)
             self.lvl_scroll = clamp(self.lvl_scroll, 0, self.lvl_max)
             self.scrollbar(area, content, self.lvl_scroll)
+            return
+
+        inset = 8
+        pal_h = max(96, min(200, area.h // 3))
+        pal = pygame.Rect(area.x + inset, area.y + 8, max(0, area.w - inset * 2), pal_h)
+        self.rrect(pal, (30, 30, 34), 10)
+        self.rrect(pal, (66, 66, 74), 10, 1)
+        inner = pal.inflate(-12, -12)
+        self.pal_area = pal
+        prev = self.push_clip(inner)
+        self.hit_clip = inner
+        try:
+            y0 = inner.y + 4 - int(self.pal_scroll)
+            end = self.draw_colors_tab(inner, inner.x + 4, y0)
+        finally:
+            self.hit_clip = None
+            self.pop_clip(prev)
+        content = end - y0 + 12
+        self.pal_max = max(0, content - inner.h)
+        self.pal_scroll = clamp(self.pal_scroll, 0, self.pal_max)
+        self.scrollbar(inner, content, self.pal_scroll)
+
+        bar = pygame.Rect(pal.x, pal.bottom + 8, pal.w, 36)
+        self.draw_palette_bar(bar)
+        picker_box = pygame.Rect(area.centerx - 124, bar.bottom + 8, 248, max(0, area.bottom - bar.bottom - 16))
+        if picker_box.h >= 120:
+            dp = self.dock_picker
+            rgb, alpha = self.color_get("fill")
+            if tuple(hsv_to_rgb(dp["h"], dp["s"], dp["v"])) != tuple(rgb) and not self.drag:
+                h, sat, val = rgb_to_hsv(rgb)
+                if sat > 0.001 and val > 0.001:
+                    dp["h"] = h
+                dp["s"], dp["v"], dp["a"] = sat, val, alpha
+            prev = self.push_clip(area)
+            self.hit_clip = area
+            try:
+                self.picker_body(dp, picker_box)
+            finally:
+                self.hit_clip = None
+                self.pop_clip(prev)
+        content_h = max(area.h, picker_box.bottom - area.y + 8)
+        self.drawing_max = max(0, content_h - area.h)
+        self.drawing_scroll = clamp(self.drawing_scroll, 0, self.drawing_max)
+        self.scrollbar(area, content_h, self.drawing_scroll)
 
     def draw_palette_bar(self, bar):
-        """Fixed strip under the palette: + Folder on the left, the three views (circles / rounded tiles / list) on the right."""
-        self.button((bar.x + 24, bar.y + 3, 84, 28), "+ Folder", lambda mx, my: (setattr(self, "pal_scroll", 0), self.begin_edit("palfolder", "", self.pal_add_folder)),
-                    radius=14, font=self.f11, hint="New folder, e.g. one for every character")
-        hx = "#%02X%02X%02X" % tuple(int(v) for v in self.def_fill)
-        hb = pygame.Rect(bar.x + 116, bar.y + 5, 84, 24)                           # the hex code of the current colour, small, bottom of the panel
-        self.rrect(hb, (34, 34, 38), 12)
-        self.txt(hx, hb.centerx, hb.centery - 1, self.f11, COLOR_MUTED, center=True)
-        bx = bar.right - 24 - 3 * 36
-        for k, (mode, hint) in enumerate((("circles", "Circles"), ("tiles", "Rounded tiles with the names"), ("list", "List"))):
-            rc = pygame.Rect(bx + k * 36, bar.y + 1, 32, 32)
+        """Palette actions and layout modes."""
+        folder = pygame.Rect(bar.x + 4, bar.y + 2, 32, 32)
+        self.flat_button(folder, lambda mx, my: (setattr(self, "pal_scroll", 0), self.begin_edit("palfolder", "", self.pal_add_folder)),
+                         "Create colour group")
+        pygame.draw.rect(self.screen, (190, 190, 198), (folder.x + 7, folder.y + 11, 18, 14), 2, border_radius=3)
+        pygame.draw.rect(self.screen, (190, 190, 198), (folder.x + 9, folder.y + 7, 8, 5), 2, border_radius=2)
+        pygame.draw.line(self.screen, (190, 190, 198), (folder.x + 16, folder.y + 13), (folder.x + 16, folder.y + 21), 2)
+        pygame.draw.line(self.screen, (190, 190, 198), (folder.x + 12, folder.y + 17), (folder.x + 20, folder.y + 17), 2)
+        trash = pygame.Rect(bar.x + 40, bar.y + 2, 32, 32)
+        self.flat_button(trash, lambda mx, my: self.delete_palette_colour(), "Delete selected colour")
+        cx, cy = trash.center
+        pygame.draw.line(self.screen, (190, 190, 198), (cx - 7, cy - 7), (cx + 7, cy - 7), 2)
+        pygame.draw.rect(self.screen, (190, 190, 198), (cx - 5, cy - 5, 10, 14), 2, border_radius=2)
+        pygame.draw.line(self.screen, (190, 190, 198), (cx - 3, cy - 1), (cx - 3, cy + 6), 1)
+        pygame.draw.line(self.screen, (190, 190, 198), (cx + 3, cy - 1), (cx + 3, cy + 6), 1)
+        bx = bar.right - 4 - 3 * 36
+        for k, (mode, hint) in enumerate((("circles", "Circles"), ("tiles", "Rounded tiles"), ("list", "List"))):
+            rc = pygame.Rect(bx + k * 36, bar.y + 2, 32, 32)
             self.flat_button(rc, lambda mx, my, m=mode: (setattr(self, "pal_view", m), self.save_prefs()), hint, self.pal_view == mode)
             cx, cy = rc.center
             if mode == "circles":
@@ -1950,8 +2026,17 @@ class CanvasMixin:
                 for dy in (-6, 0, 6):
                     pygame.draw.line(self.screen, (235, 235, 235), (cx - 8, cy + dy), (cx + 8, cy + dy), 2)
 
+    def delete_palette_colour(self):
+        ids = sorted((self.pal_sel or ({self.pal_active} if self.pal_active is not None else set())), reverse=True)
+        for i in ids:
+            if 0 <= i < len(self.palette):
+                self.palette.pop(i)
+        if ids:
+            self.pal_active, self.pal_sel = None, set()
+            self.save_prefs()
+
     def draw_colors_tab(self, r, x, y):
-        W = r.w - 48
+        W = max(1, r.right - x - 12)
         if self.pal_folders:                                          # the folder chips appear once there is a folder
             cx0 = x
             for name, val in [("All", None)] + [(f, f) for f in self.pal_folders]:
@@ -1959,9 +2044,8 @@ class CanvasMixin:
                 if cx0 + tw > x + W:
                     cx0, y = x, y + 28
                 rc = pygame.Rect(cx0, y, tw, 24)
-                self.button(rc, name, lambda mx, my, v=val: setattr(self, "pal_open", v), active=self.pal_open == val, radius=12, font=self.f11)
-                if val is not None:
-                    self.hit(rc, lambda mx, my, v=val: self.pal_folder_menu(v, (mx, my)), (3,))
+                self.button(rc, name, lambda mx, my, v=val: self.open_palette_folder(v), active=self.pal_open == val, radius=12, font=self.f11)
+                self.hit(rc, lambda mx, my, v=val: self.pal_folder_menu(v, (mx, my)), (3,))
                 cx0 += tw + 6
             y += 32
         ed_id = self.edit.get("id", "") if self.edit else ""
@@ -1977,8 +2061,12 @@ class CanvasMixin:
                 per = max(1, W // 34)
                 rc = pygame.Rect(x + (n % per) * 34, y + (n // per) * 34, 28, 28)
             elif view == "tiles":
-                per = max(1, (W + 6) // 90)
-                rc = pygame.Rect(x + (n % per) * 90, y + (n // per) * 34, 84, 28)
+                per = max(1, min(3, (W + 6) // 90))
+                tile_w = max(56, (W - (per - 1) * 6) // per)
+                grid_x = x + max(0, (W - (per * 90 - 6)) // 2)
+                if W >= per * 90 - 6:
+                    grid_x = x + (W - (per * tile_w + (per - 1) * 6)) // 2
+                rc = pygame.Rect(grid_x + (n % per) * (tile_w + 6), y + (n // per) * 36, tile_w, 30)
             else:
                 rc = pygame.Rect(x, y + n * 30, W, 26)
             if n < len(vis):
@@ -1990,11 +2078,11 @@ class CanvasMixin:
                 label = e["name"] or f"Color {i + 1}"
                 if view == "circles":
                     self.rrect(rc, c, 14)
-                    if tuple(c) == tuple(self.def_fill):
+                    if tuple(c) == tuple(self.def_fill) or i in self.pal_sel:
                         self.rrect(rc, (255, 255, 255), 14, 2)
                 elif view == "tiles":
                     self.rrect(rc, c, 10)
-                    if tuple(c) == tuple(self.def_fill):
+                    if tuple(c) == tuple(self.def_fill) or i in self.pal_sel:
                         self.rrect(rc, (255, 255, 255), 10, 2)
                     pcl = self.push_clip(rc)
                     self.txt(label, rc.centerx, rc.centery, self.f11, tc, center=True)
@@ -2003,16 +2091,18 @@ class CanvasMixin:
                     self.rrect(rc, COLOR_HOVER if self.hovering(rc) else (34, 34, 38), 8)
                     sw = pygame.Rect(rc.x + 4, rc.y + 3, 20, 20)
                     self.rrect(sw, c, 10)
+                    if i in self.pal_sel:
+                        self.rrect(rc, (235, 235, 235), 8, 1)
                     self.txt(label, rc.x + 32, rc.y + 5, self.f11)
                 self.hit(rc, lambda mx, my, i=i, c=c: self.pal_click(i, c))
                 self.hit(rc, lambda mx, my, i=i: self.pal_menu(i, (mx, my)), (3,))
                 if self.hovering(rc):
-                    self.hover_hint = label + "  #%02X%02X%02X" % tuple(int(v) for v in c) + "  - click: use it / double-click: rename / right-click: more"
+                    self.hover_hint = label + "  #%02X%02X%02X" % tuple(int(v) for v in c) + "  - click: use / Shift-click: select several / double-click: rename / right-click: more"
             else:
                 add_rc = rc
                 self.rrect(rc, (48, 48, 48), 14 if view == "circles" else 10)
                 self.txt("+" if view != "list" else "+ Add the current colour", rc.centerx, rc.centery, self.fb2 if view != "list" else self.f11, COLOR_TEXT, center=True)
-                self.hit(rc, lambda mx, my: (self.palette.append({"c": tuple(self.color_get("fill")[0]), "name": "", "folder": self.pal_open}), self.save_prefs()))
+                self.hit(rc, lambda mx, my: self.add_palette_colour())
                 if self.hovering(rc):
                     self.hover_hint = "Add the current fill colour to the palette" + (f" (folder {self.pal_open})" if self.pal_open else "")
         if view == "circles":

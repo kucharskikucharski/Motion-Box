@@ -59,16 +59,16 @@ COLOR_THUMB = (79, 79, 79)          # #4F4F4F scrollbar thumb
 COLOR_YELLOW = (240, 190, 60)
 COLOR_HEAD = (28, 28, 28)           # panel header strip, inactive tabs
 COLOR_FIELD = (26, 26, 26)          # text fields, unchecked boxes
-COLOR_TL = (30, 31, 35)             # timeline and bottom bars
+COLOR_TL = (34, 34, 34)             # timeline and bottom bars
 LABEL_PURPLE = (126, 87, 194)
 # label colours per element type (editable: click the dot on a layer or Edit > Preferences > Labels)
 # 16 label colours + names (like After Effects > Settings > Labels); palette chosen by the user
-LABEL_DEFAULT_LIST = [("Deep Lilac", (131, 86, 193)), ("Bubblegum Pink", (255, 107, 125)), ("Porcelain", (255, 251, 246)),
-                      ("Icy Aqua", (173, 236, 230)), ("Night Bordeaux", (67, 7, 20)), ("Tomato", (255, 74, 79)),
-                      ("Mustard", (255, 215, 111)), ("Blue Sail", (42, 157, 240)), ("Midnight Violet", (36, 12, 48)),
-                      ("Cinnamon Wood", (180, 123, 101)), ("Blush Pop", (239, 171, 200)), ("Amber Flame", (255, 188, 63)),
-                      ("Deep Mocha", (64, 40, 40)), ("Deep Teal", (0, 133, 122)), ("Dark Plum", (75, 38, 110)),
-                      ("Slate", (96, 110, 130))]
+LABEL_DEFAULT_LIST = [("Clay", (174, 128, 98)), ("Blush", (236, 167, 199)), ("Violet", (203, 44, 239)),
+                      ("Coral", (249, 92, 113)), ("Tangerine", (255, 99, 64)), ("Sunflower", (255, 188, 43)),
+                      ("Amber", (241, 141, 15)), ("Lime", (123, 212, 36)), ("Green", (35, 193, 92)),
+                      ("Forest", (0, 132, 72)), ("Teal", (0, 115, 105)), ("Sky", (27, 156, 230)),
+                      ("Blue", (0, 88, 213)), ("Lavender", (126, 80, 185)), ("Plum", (101, 64, 147)),
+                      ("Slate", (93, 109, 128))]
 # which label each element type uses by default (index into the list above)
 TYPE_LABEL_DEFAULT = {"vector": 0, "brush": 3, "null": 7, "controller": 11, "image": 1, "comp": 5, "text": 6, "peg": 10}
 LABEL_NAMES = {"vector": "Vectors", "brush": "Brush / raster", "null": "Nulls", "controller": "Controllers",
@@ -134,7 +134,7 @@ KEYMAP = {pygame.K_v: "select", pygame.K_r: "rect", pygame.K_b: "brush",
           pygame.K_e: "eraser", pygame.K_a: "animate", pygame.K_c: "scissors", pygame.K_z: "zoom", pygame.K_f: "fill", pygame.K_g: "pen", pygame.K_n: "null", pygame.K_j: "bone",
           pygame.K_h: "hand", pygame.K_i: "eyedropper", pygame.K_o: "ellipse", pygame.K_x: "bone_anim", pygame.K_s: "bone"}
 WORKSPACES = ["Drawing", "Animate", "Schematic", "Fx", "Expressions", "Script"]
-MENU_NAMES = ["File", "Edit", "Object", "Type", "Effects", "View", "Tools", "Panels"]
+MENU_NAMES = ["File", "Edit", "Composition", "Object", "Type", "Effects", "View", "Tools", "Panels"]
 FORMATS = [("HD 1920 x 1080", 1920, 1080), ("4K UHD 3840 x 2160", 3840, 2160),
            ("Square 1080 x 1080", 1080, 1080), ("Vertical 1080 x 1920", 1080, 1920),
            ("Custom", None, None)]
@@ -329,18 +329,37 @@ def cursor_png(kind):
 
 
 def ui_icon(name):
-    """Small interface icons from icons/ui/ (lock_on, lock_off, eye_on, eye_off)."""
+    """Interface icons in ui/ or its category subfolders; direct legacy files still work."""
     key = ("ui", name)
     if key not in _icon_cache:
         sf = None
-        p = os.path.join(ICONS_DIR, "ui", name + ".png")
-        if os.path.exists(p):
+        ui_dir = os.path.join(ICONS_DIR, "ui")
+        paths = [os.path.join(ui_dir, name + ".png"), os.path.join(ICONS_DIR, name + ".png")]
+        if os.path.isdir(ui_dir):
+            paths.extend(os.path.join(root, f) for root, _, files in os.walk(ui_dir)
+                         for f in sorted(files) if f.lower() == (name + ".png").lower())
+        p = next((path for path in paths if os.path.exists(path)), None)
+        if p:
             try:
                 sf = pygame.image.load(p).convert_alpha()
             except Exception:  # noqa
                 sf = None
         _icon_cache[key] = (sf, True)
     return _icon_cache[key][0]
+
+
+def draw_ui_icon(surf, name, rect, col, state=None):
+    """Draw an optional icons/ui PNG, tinted to the current interface colour."""
+    icon = ui_icon(f"{name}_{state}") if state else None
+    icon = icon or ui_icon(name)
+    if icon is None:
+        return False
+    if icon.get_size() != rect.size:
+        icon = pygame.transform.smoothscale(icon, rect.size)
+    tinted = icon.copy()
+    tinted.fill((*col, 255), special_flags=pygame.BLEND_RGBA_MULT)
+    surf.blit(tinted, rect)
+    return True
 
 
 def _clip_cmd(write):
@@ -393,6 +412,8 @@ def load_icon(name, size=30):
 
 def draw_icon(surf, kind, r, col):
     """Transport / small UI icons - all with rounded corners."""
+    if draw_ui_icon(surf, kind, r, col):
+        return
     cx, cy = r.center
     s = 6
     d = pygame.draw
@@ -570,7 +591,7 @@ def ease_t(t, e):
 # ---------------------------------------------------------------- model
 FIELDS = ("name", "kind", "w", "h", "pts", "fill", "fill_on", "fill_a", "stroke_on", "stroke", "stroke_a",
           "stroke_w", "base", "expr", "visible", "locked", "render", "expanded", "label", "node", "phases",
-          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius", "sep_xy", "phase_src")
+          "limit", "t_in", "t_out", "closed", "fold_id", "src", "anchor", "png", "matte", "matte_inv", "caption", "ik", "caption_color", "matte_show", "collapsed", "rot_limit", "sides", "drivers", "pin", "watch", "radius", "sep_xy", "phase_src", "ik_flip_keys", "layer_num", "comp_ref")
 
 
 class Obj:
@@ -588,6 +609,8 @@ class Obj:
         self.parent = None
         self.visible, self.locked, self.render, self.expanded = True, False, True, False
         self.label = None          # None = use the colour of the element type
+        self.layer_num = None      # stable timeline number; gaps remain when layers are removed
+        self.comp_ref = None
         self.node = None
         self.phases = []          # frames where a new drawing phase starts
         self.phase_pts = {}
@@ -604,6 +627,7 @@ class Obj:
         self.owner = None         # the vector layer this shape belongs to
         self.surf, self.png = None, None      # raster layer pixels / saved png (assets/...)
         self.ik = None            # two-bone IK: {role, other, target, flip}
+        self.ik_flip_keys = {}    # frame -> bend direction; discrete, never interpolated
         self.caption_color = None
         self.matte_show = False   # keep the matte layer visible as well
         self.collapsed = False    # a group (parent) whose children are folded away in the timeline
@@ -863,16 +887,16 @@ def shape_pts(o, frame=1):
 THEMES = {
     "Dark": dict(COLOR_BG=(34, 34, 34), COLOR_PANEL=(38, 38, 38), COLOR_VIEWPORT=(28, 28, 28), COLOR_BTN=(48, 48, 48),
                  COLOR_HOVER=(62, 62, 62), COLOR_LINE=(58, 58, 58), COLOR_TEXT=(234, 234, 234), COLOR_MUTED=(150, 150, 150),
-                 COLOR_HEAD=(28, 28, 28), COLOR_FIELD=(26, 26, 26), COLOR_TL=(30, 31, 35)),
+                 COLOR_HEAD=(28, 28, 28), COLOR_FIELD=(26, 26, 26), COLOR_TL=(34, 34, 34)),
     "Graphite": dict(COLOR_BG=(50, 51, 54), COLOR_PANEL=(60, 61, 65), COLOR_VIEWPORT=(42, 43, 46), COLOR_BTN=(74, 75, 80),
                      COLOR_HOVER=(92, 93, 99), COLOR_LINE=(82, 83, 88), COLOR_TEXT=(240, 240, 242), COLOR_MUTED=(170, 170, 176),
-                     COLOR_HEAD=(44, 45, 48), COLOR_FIELD=(40, 41, 44), COLOR_TL=(46, 47, 50)),
+                     COLOR_HEAD=(44, 45, 48), COLOR_FIELD=(40, 41, 44), COLOR_TL=(50, 51, 54)),
     "Slate": dict(COLOR_BG=(58, 64, 76), COLOR_PANEL=(70, 77, 91), COLOR_VIEWPORT=(50, 55, 66), COLOR_BTN=(84, 92, 108),
                   COLOR_HOVER=(104, 113, 131), COLOR_LINE=(94, 102, 118), COLOR_TEXT=(242, 244, 248), COLOR_MUTED=(176, 184, 198),
-                  COLOR_HEAD=(52, 58, 69), COLOR_FIELD=(46, 51, 61), COLOR_TL=(54, 60, 72)),
+                  COLOR_HEAD=(52, 58, 69), COLOR_FIELD=(46, 51, 61), COLOR_TL=(58, 64, 76)),
     "Steel": dict(COLOR_BG=(84, 88, 96), COLOR_PANEL=(98, 103, 112), COLOR_VIEWPORT=(72, 76, 84), COLOR_BTN=(114, 120, 131),
                   COLOR_HOVER=(136, 143, 156), COLOR_LINE=(124, 130, 142), COLOR_TEXT=(248, 248, 250), COLOR_MUTED=(200, 204, 212),
-                  COLOR_HEAD=(76, 80, 88), COLOR_FIELD=(66, 70, 78), COLOR_TL=(78, 82, 90)),
+                  COLOR_HEAD=(76, 80, 88), COLOR_FIELD=(66, 70, 78), COLOR_TL=(84, 88, 96)),
 }
 
 

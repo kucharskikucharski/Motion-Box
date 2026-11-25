@@ -42,14 +42,16 @@ class AppBase:
         # playback
         self.playing, self.loop, self.play_acc = False, True, 0.0
         # tools / ui state
-        self.tool, self.slot_tool = "select", {}
+        self.tool, self.slot_tool = "animate", {}
         self.flyout, self.press_slot = None, None
-        self.workspace, self.left_tab, self.right_tab = "Animate", "Edit", "Properties"
+        self.workspace, self.left_tab, self.right_tab = "Drawing", "Footage", "Properties"
+        self.workspace_presets, self.default_workspace = {}, "Drawing"
         self.link_mode, self.link_drag, self.link_mouse = False, None, (0, 0)
         self.drag, self.drag_end, self.btn = None, None, 1
         self.hits, self.row_rects, self.hover_hint = [], [], None
         self.dialog, self.edit, self.picker, self.eyedrop = None, None, None, False
         self.menu_open, self.maxi = None, None
+        self.comp_dlg = None
         self.toast = ("", 0)
         self.view_fit, self.zoom, self.ox, self.oy = True, 0.3, 0.0, 0.0
         self.view = {"safe": False, "grid3": False, "gray": False, "onion": False, "render": False, "camera": False}
@@ -64,13 +66,14 @@ class AppBase:
         self.start_tab, self.tl_cx0 = "load", 0
         self.auto_phase = False
         self.r_view = pygame.Rect(0, 0, 100, 100)
+        self.r_tl = pygame.Rect(0, 0, 0, 0)  # valid before compute_layout() runs
         self.r_aux = None
         self.w_left, self.w_right, self.h_tl = 208, 264, 176          # resizable panels
         self.reorder, self.quit_dlg, self.saved_sig, self.last_autosave = None, None, None, 0
         self.autosave = {"on": True, "min": 5}
         self.theme, self.idle_icons, self._ik_depth = "Dark", {}, 0
         self.replace_target, self.seq_dlg, self.clipboard, self.paste_n, self.br_start, self.br_last = None, None, [], 0, {}, 0
-        self.animate_filter, self.split_frac, self.sel_wire, self.hit_clip, self.aux_scroll = "both", 0.5, None, None, 0
+        self.animate_filter, self.split_frac, self.sel_wire, self.hit_clip, self.aux_scroll = "both", 0.72, None, None, 0
         self.focus_area, self.clip_cut, self.ar_start, self.ar_last, self.rename_dlg = "view", False, {}, 0, None
         self.prefs_tab, self.pref_q = "General", ""
         self.global_key, self.rig_bones, self.auto_key, self.rest_layer, self.parent_drop, self.autoscroll = False, {}, False, None, None, None
@@ -79,7 +82,7 @@ class AppBase:
         self.ph_sel, self.ph_play, self.ph_prev = set(), False, None
         self.tl_query, self.tl_type = "", "All"
         self.single_layer, self.brush_smooth = False, 40
-        self.select_whole_level = False  # Select tool: click any shape to select all shapes in its level.
+        self.select_all_phases = False  # Select the drawing layer so edits apply to every phase.
         self.show_active_bones = False
         self.ph_view, self.ph_tiles, self.ph_drop, self.ph_ghost, self._pal_click = "grid", [], None, None, (None, 0)
         self.frame_mode, self.fr_sel, self.fr_clip = True, set(), None
@@ -88,6 +91,7 @@ class AppBase:
         self.jwiz = None
         Obj.PHASE_HOOK = self.phase_from_slider
         self.pal_scroll, self.lvl_scroll, self.pal_max, self.lvl_max, self.pal_area = 0, 0, 0, 0, pygame.Rect(0, 0, 0, 0)
+        self.drawing_scroll, self.drawing_max = 0, 0
         self.right_scroll, self.right_max, self._content_end, self.align_to = 0, 0, 0, "artboard"
         self.wrap_ok, self.wrap_off, self.dock_picker, self.drawing_tab, self.eyedrop_p = False, 0, {"field": "fill", "h": 0.0, "s": 0.0, "v": 1.0, "a": 100, "sv_h": None}, "Colors", None
         self.onion, self.markers, self.marker_dlg = {"before": 1, "after": 1}, [], None
@@ -101,10 +105,11 @@ class AppBase:
         self.labels = {}
         self.labels_sync()
         self.nd_zoom, self.nd_ox, self.nd_oy = 1.0, 0.0, 0.0           # node panel view
-        self.art_color, self.hidden, self.sel_anchor = COLOR_ARTBOARD, {"right"}, None       # the right dock starts closed (Panels menu opens it)
+        self.art_color, self.hidden, self.sel_anchor = COLOR_ARTBOARD, set(), None       # start with Footage and Properties visible
         self.brush_opts = {"auto_close": False, "auto_group": False, "auto_fill": False, "draw_under": False}
         self.palette = [{"c": tuple(c), "name": "", "folder": None} for _, c in LABEL_DEFAULT_LIST[:8]]
         self.pal_folders, self.pal_view, self.pal_open = [], "circles", None
+        self.pal_active, self.pal_clipboard, self.pal_sel = None, [], set()
         self.lib_sel, self.lib_folder, self._lib_cache, self._lib_click, self._lib_visible = set(), None, {}, (None, 0), []
         self.foot_multi = set()
         self.ex_multi, self.ex_seq = set(), True
@@ -131,12 +136,252 @@ class AppBase:
 
     # ------------------------------------------------------------------ scene
     def new_scene(self):
-        null = Obj("Null Control 1", "null", 760, 540, 100, 100)
-        null.fill = (61, 121, 230)
-        for f, x, y in ((1, 760, 540), (36, 1150, 380), (72, 760, 540)):
-            null.keys["x"][f], null.keys["y"][f] = x, y
-        box = Obj("Box Object", "rect", 1010, 490, 200, 200)
-        self.objs, self.sel, self.frame = [null, box], [box], 1
+        self.objs, self.sel, self.frame = [], [], 1
+        self.compositions, self.active_comp, self.comp_owners = {"Main": self.objs}, "Main", {}
+        self.main_comp = "Main"
+        self.comp_settings = {"Main": {"width": self.aw, "height": self.ah, "color": list(self.art_color)}}
+
+    def workspace_state(self):
+        return {"workspace": self.workspace, "hidden": sorted(self.hidden),
+                "w_left": self.w_left, "w_right": self.w_right, "h_tl": self.h_tl,
+                "split_frac": self.split_frac, "left_tab": self.left_tab,
+                "right_tab": self.right_tab, "drawing_tab": self.drawing_tab}
+
+    def apply_workspace_state(self, state):
+        if not isinstance(state, dict):
+            return False
+        workspace = state.get("workspace")
+        if workspace in WORKSPACES:
+            self.workspace = workspace
+        self.hidden = set(state.get("hidden", []))
+        self.w_left = int(clamp(state.get("w_left", self.w_left), 160, 400))
+        self.w_right = int(clamp(state.get("w_right", self.w_right), 200, 480))
+        self.h_tl = int(clamp(state.get("h_tl", self.h_tl), 96, 400))
+        self.split_frac = clamp(state.get("split_frac", self.split_frac), 0.15, 0.85)
+        self.left_tab = state.get("left_tab", self.left_tab)
+        self.right_tab = state.get("right_tab", self.right_tab)
+        self.drawing_tab = state.get("drawing_tab", self.drawing_tab)
+        return True
+
+    def save_workspace(self):
+        self.workspace_presets[self.workspace] = self.workspace_state()
+        self.save_prefs()
+        self.msg(f"Saved {self.workspace} workspace")
+
+    def load_workspace(self, name):
+        state = self.workspace_presets.get(name)
+        if state and self.apply_workspace_state(state):
+            self.msg(f"Loaded {name} workspace")
+        else:
+            self.msg(f"No saved {name} workspace")
+
+    def set_default_workspace(self):
+        self.workspace_presets[self.workspace] = self.workspace_state()
+        self.default_workspace = self.workspace
+        self.save_prefs()
+        self.msg(f"{self.workspace} is the default workspace")
+
+    def set_active_comp(self, name):
+        if name not in getattr(self, "compositions", {}):
+            return
+        self.edit = None
+        self.compositions[self.active_comp] = self.objs
+        self.comp_settings[self.active_comp] = {"width": self.aw, "height": self.ah, "color": list(self.art_color)}
+        self.active_comp, self.objs, self.sel = name, self.compositions[name], []
+        settings = self.comp_settings.get(name, {})
+        self.aw, self.ah = int(settings.get("width", self.aw)), int(settings.get("height", self.ah))
+        self.art_color = tuple(settings.get("color", self.art_color))
+        self.view_fit = True
+        owner_info = self.comp_owners.get(name)
+        owner = None
+        if owner_info:
+            scene, layer = owner_info
+            owner = next((o for o in self.compositions.get(scene, []) if o.name == layer), None)
+        for obj in self.objs:
+            if owner and obj.parent is None:
+                obj.parent = owner
+            elif not owner and obj.parent not in self.objs:
+                obj.parent = None
+        self.msg(f"Composition: {name}")
+
+    def open_new_comp(self, mx=0, my=0):
+        self.comp_dlg = {"new": True, "name": "Composition", "preset": 0, "w": 1920, "h": 1080,
+                         "ratio": 1920 / 1080, "lock": True, "color": tuple(self.art_color)}
+        n = 1
+        while f"Composition {n}" in self.compositions:
+            n += 1
+        self.comp_dlg["name"] = f"Composition {n}"
+
+    def open_edit_comp(self, mx=0, my=0):
+        if not self.active_comp:
+            return
+        self.comp_dlg = {"new": False, "name": self.active_comp, "preset": 4, "w": self.aw, "h": self.ah,
+                         "ratio": self.aw / max(1, self.ah), "lock": True, "color": tuple(self.art_color)}
+        for i, (_, fw, fh) in enumerate(FORMATS[:-1]):
+            if (fw, fh) == (self.aw, self.ah):
+                self.comp_dlg["preset"] = i
+                break
+
+    def comp_choose_format(self, i):
+        d = self.comp_dlg
+        if not d:
+            return
+        d["preset"] = i
+        if i < len(FORMATS) - 1:
+            _, d["w"], d["h"] = FORMATS[i]
+            d["ratio"] = d["w"] / d["h"]
+
+    def comp_dimension(self, key, value):
+        d = self.comp_dlg
+        if not d:
+            return
+        value = int(clamp(value, 16, 16384))
+        d[key] = value
+        if d["lock"]:
+            other = "h" if key == "w" else "w"
+            d[other] = max(16, int(round(value / d["ratio"] if key == "w" else value * d["ratio"])))
+        d["preset"] = len(FORMATS) - 1
+
+    def comp_toggle_lock(self, mx=0, my=0):
+        d = self.comp_dlg
+        if not d:
+            return
+        d["lock"] = not d["lock"]
+        if d["lock"]:
+            d["ratio"] = d["w"] / max(1, d["h"])
+
+    def save_comp_dialog(self, mx=0, my=0):
+        d = self.comp_dlg
+        if not d:
+            return
+        name = d["name"].strip()
+        if not name or any(c in '/\\:*?"<>|' for c in name):
+            self.msg("Enter a valid composition name")
+            return
+        old = self.active_comp
+        if d["new"]:
+            if name in self.compositions:
+                self.msg("A composition with this name already exists")
+                return
+            self.compositions[old] = self.objs
+            self.comp_settings[old] = {"width": self.aw, "height": self.ah, "color": list(self.art_color)}
+            self.compositions[name] = []
+            self.comp_settings[name] = {"width": d["w"], "height": d["h"], "color": list(d["color"])}
+            wrapper = Obj(self.unique_name(name), "comp", 0, 0, d["w"], d["h"])
+            wrapper.comp_ref = name
+            self.assign_layer_number(wrapper, fresh=True)
+            self.compositions[old].insert(0, wrapper)
+            self.comp_owners[name] = (old, wrapper.name)
+            self.set_active_comp(name)
+        else:
+            if name != old and name in self.compositions:
+                self.msg("A composition with this name already exists")
+                return
+            if name != old:
+                self.compositions[name] = self.compositions.pop(old)
+                self.comp_settings[name] = self.comp_settings.pop(old, {})
+                if old == self.main_comp:
+                    self.main_comp = name
+                for items in self.compositions.values():
+                    for obj in items:
+                        if obj.comp_ref == old:
+                            obj.comp_ref = name
+                owner = self.comp_owners.pop(old, None)
+                if owner:
+                    self.comp_owners[name] = owner
+                for key, value in list(self.comp_owners.items()):
+                    self.comp_owners[key] = (name if value[0] == old else value[0], value[1])
+                self.active_comp = name
+            self.aw, self.ah, self.art_color = d["w"], d["h"], tuple(d["color"])
+            self.comp_settings[name] = {"width": self.aw, "height": self.ah, "color": list(self.art_color)}
+            owner_info = self.comp_owners.get(name)
+            if owner_info:
+                wrapper = next((o for o in self.compositions.get(owner_info[0], []) if o.name == owner_info[1]), None)
+                if wrapper:
+                    wrapper.w, wrapper.h = self.aw, self.ah
+        self.comp_dlg = None
+        self.view_fit = True
+        self.compute_layout()
+        self.msg(f"Composition saved: {name}")
+
+    def precompose_selected(self):
+        selected = [o for o in self.sel if o in self.objs]
+        if not selected:
+            self.msg("Select layers to precompose")
+            return
+        selected_set = set(selected)
+        def has_selected_ancestor(obj):
+            ancestor, depth = obj.parent, 0
+            while ancestor in self.objs and depth < 100:
+                if ancestor in selected_set:
+                    return True
+                ancestor, depth = ancestor.parent, depth + 1
+            return False
+        roots = [o for o in selected if not has_selected_ancestor(o)]
+        parent = roots[0].parent if roots and roots[0].parent in self.objs else None
+        same_sibling_group = len(roots) > 1 and parent is not None and all(o.parent is parent for o in roots)
+        if len(roots) != 1 and not same_sibling_group:
+            self.msg("Precompose only supports one hierarchy branch")
+            return
+        members, pending = set(selected), list(selected)
+        while pending:
+            p = pending.pop()
+            for child in self.objs:
+                if child.parent is p and child not in members:
+                    members.add(child)
+                    pending.append(child)
+        ordered = [o for o in self.objs if o in members]
+        index = min(self.objs.index(o) for o in ordered)
+        n = 1
+        while f"Precomp {n}" in self.compositions:
+            n += 1
+        name = f"Precomp {n}"
+        wrapper = Obj(name, "comp", 0, 0, self.aw, self.ah)
+        wrapper.comp_ref, wrapper.parent = name, parent
+        self.assign_layer_number(wrapper, fresh=True)
+        for obj in ordered:
+            if obj.parent not in members:
+                obj.parent = None
+        self.objs[:] = [o for o in self.objs if o not in members]
+        self.objs.insert(index, wrapper)
+        self.compositions[self.active_comp] = self.objs
+        self.compositions[name] = ordered
+        self.comp_settings[name] = {"width": self.aw, "height": self.ah, "color": list(self.art_color)}
+        self.comp_owners[name] = (self.active_comp, wrapper.name)
+        for obj in ordered:
+            if obj.parent is None:
+                obj.parent = wrapper
+        self.sel = [wrapper]
+        self.msg(f"Created {name} with {len(ordered)} layer(s)")
+
+    def unprecompose_selected(self):
+        comps = [o for o in self.sel if o.kind == "comp" and o.comp_ref in self.compositions]
+        if not comps:
+            self.msg("Select a precomposition layer to separate")
+            return
+        separated = []
+        for wrapper in comps:
+            name = wrapper.comp_ref
+            if name == self.active_comp:
+                self.msg("Switch back to the parent composition before separating this layer")
+                return
+            children = self.compositions.get(name, [])
+            if wrapper not in self.objs:
+                continue
+            index, parent = self.objs.index(wrapper), wrapper.parent
+            for child in children:
+                if child.parent is wrapper or child.parent not in children:
+                    child.parent = parent
+                if child.kind == "comp" and child.comp_ref in self.comp_owners:
+                    self.comp_owners[child.comp_ref] = (self.active_comp, child.name)
+            self.objs[index:index + 1] = children
+            self.compositions[self.active_comp] = self.objs
+            self.compositions.pop(name, None)
+            self.comp_owners.pop(name, None)
+            self.comp_settings.pop(name, None)
+            separated.extend(children)
+        self.sel = separated
+        self.msg(f"Separated {len(comps)} precomposition layer(s)")
 
     @property
     def frame(self):
@@ -179,7 +424,7 @@ class AppBase:
 
     def flip_selected(self, axis):
         """Mirror the selected shapes around the middle of the selection: axis x = left-right, y = top-bottom."""
-        objs = [s for s in self.sel if not s.locked and s.kind != "bone" and not s.kind.startswith("ctrl") and s.kind not in ("vlayer", "rlayer", "image")]
+        objs = [s for s in self.sel if not s.locked and s.kind != "bone" and s.kind not in ("vlayer", "rlayer", "image")]
         if not objs:
             self.msg("Select the shapes inside a drawing layer to flip them")
             return
@@ -202,6 +447,16 @@ class AppBase:
 
     def pal_click(self, i, c):
         now = pygame.time.get_ticks()
+        self.pal_active = i
+        mods = pygame.key.get_mods()
+        if mods & (pygame.KMOD_SHIFT | pygame.KMOD_CTRL | pygame.KMOD_META):
+            if i in self.pal_sel:
+                self.pal_sel.discard(i)
+            else:
+                self.pal_sel.add(i)
+            self._pal_click = (None, 0)
+            return
+        self.pal_sel = {i}
         if self._pal_click[0] == i and now - self._pal_click[1] < 400:       # double-click: type the colour's own name
             e = self.palette[i]
             self.begin_edit(f"palname_{i}", e["name"] or f"Color {i + 1}", lambda s, e=e: (e.update(name=s.strip()), self.save_prefs()))
@@ -225,13 +480,14 @@ class AppBase:
         self.ox, self.oy = r.centerx - self.aw / 2 * z, r.centery - self.ah / 2 * z
 
     def toggle_all(self, flag):
+        targets = [o for o in self.objs if self.tl_match(o)]
         if flag == "visible":
-            new = not any(o.visible for o in self.objs)
-            for o in self.objs:
+            new = not any(o.visible for o in targets)
+            for o in targets:
                 o.visible = new
-            self.msg("All layers shown" if new else "All layers hidden")
+            self.msg("Filtered layers shown" if new else "Filtered layers hidden")
         else:
-            vis = [o for o in self.objs if o.visible]
+            vis = [o for o in targets if o.visible]
             new = any(not o.locked for o in vis)
             for o in vis:
                 o.locked = new
@@ -239,6 +495,10 @@ class AppBase:
 
     def create_from_dialog(self, kind):
         self.layer_dlg = False
+        if kind == "solid":
+            self.new_solid()
+            self.add_footage()
+            return
         if kind == "vlayer":
             self.new_layer("vlayer", True)
             return
@@ -353,10 +613,18 @@ class AppBase:
         elif kind == "peg":
             o.fill = (160, 160, 170)
         if insert:
+            self.assign_layer_number(o)
             self.objs.insert(0, o)
         if select:
             self.sel = [o]
         return o
+
+    def assign_layer_number(self, obj, fresh=False):
+        if fresh or obj.layer_num is None:
+            nums = [o.layer_num or 0 for o in getattr(self, "objs", [])]
+            if getattr(self, "clip_cut", False):
+                nums.extend(c.get("d", {}).get("layer_num") or 0 for c in getattr(self, "clipboard", []))
+            obj.layer_num = max(nums, default=0) + 1
 
     def add_box(self, name="Box Object", x=960, y=540, color=(140, 70, 200)):   # used by scripts
         o = self.new_obj("rect", x, y)
@@ -374,14 +642,17 @@ class AppBase:
         w = 200 if "x" in mode else 40
         h = 200 if "y" in mode else 40
         fr = Obj(self.unique_name(name), "rsquare" if mode == "xy" else "pill", x, y, w, h)
+        self.assign_layer_number(fr)
         fr.fill, fr.stroke, fr.stroke_on = (40, 40, 46), (110, 110, 125), True
         fr.fill_on, fr.stroke_w = False, 3                        # sliders and joysticks: see-through, a slightly thicker outline
         kn = Obj(self.unique_name(fr.name + " Knob"), "ellipse", 0, 0, 36, 36)
+        self.assign_layer_number(kn)
         kn.fill, kn.parent = (61, 121, 230), fr
         lx = (w - 36) / 2 if "x" in mode else 0        # the knob never leaves the frame
         ly = (h - 36) / 2 if "y" in mode else 0
         kn.limit = (-lx, lx, -ly, ly)
         self.objs[0:0] = [kn, fr]
+        kn.layer_num, fr.layer_num = fr.layer_num, (fr.layer_num or 0) + 1
         self.sel = [kn]
         self.msg(f"{fr.name} created - move the knob")
 
@@ -389,6 +660,7 @@ class AppBase:
     def new_layer(self, kind, ask_name=False):
         base = "Vector Layer" if kind == "vlayer" else "Raster Layer"
         o = Obj(self.unique_name(base, numbered=True), kind, self.aw // 2, self.ah // 2, self.aw, self.ah)
+        self.assign_layer_number(o)
         if kind == "rlayer":
             o.surf = pygame.Surface((self.aw, self.ah), pygame.SRCALPHA)
         self.objs.insert(0, o)
@@ -437,7 +709,7 @@ class AppBase:
     def layer_menu(self, o, pos):
         if o not in self.sel:
             self.sel = [o]
-        self.ctx = {"pos": pos, "items": [("Group  (Ctrl+G)", self.group_selected), ("Fold layers (pack)", self.fold_selected),
+        self.ctx = {"pos": pos, "items": [("Precompose", self.precompose_selected), ("Group  (Ctrl+G)", self.group_selected), ("Fold layers (pack)", self.fold_selected),
                                           ("Lock / unlock", lambda: self.toggle_flag(o, "locked")),
                                           ("Hide / show", lambda: self.toggle_flag(o, "visible")),
                                           ("Rename...  (Ctrl+R)", self.open_rename),
@@ -447,7 +719,7 @@ class AppBase:
                                           ("Cut at playhead", lambda: self.cut_layer(o.owner or o, self.frame)),
                                           ("Remove trim", lambda: self.trim_to_playhead("reset")),
                                           ("New layer", lambda: self.new_layer("vlayer", True)),
-                                          ("Delete", self.delete_selected)] + ([("Show in footage", lambda: self.show_in_footage(o))] if o.src is not None else [])}
+                                          ("Delete", self.delete_selected)] + ([("Separate Composition", self.unprecompose_selected)] if o.kind == "comp" else []) + ([("Show in footage", lambda: self.show_in_footage(o))] if o.src is not None else [])}
 
     # ------------------------------------------------------- clipboard (copy / cut / paste)
     def copy_sel(self, cut=False):
@@ -500,6 +772,8 @@ class AppBase:
             else:
                 o.name = self.unique_name(o.name)
                 o.base["x"], o.base["y"] = round(wx, 1), round(wy, 1)
+                if not self.clip_cut:
+                    self.assign_layer_number(o, fresh=True)
                 if c["surf"] is not None:
                     o.surf = c["surf"].copy()
                 self.objs.insert(0, o)
@@ -644,6 +918,7 @@ class AppBase:
                 continue
             n = Obj.from_dict(o.to_dict())
             n.name, n.parent = self.unique_name(o.name), o.parent
+            self.assign_layer_number(n, fresh=True)
             n.base["x"] += 10
             n.base["y"] += 10
             self.objs.insert(0, n)
@@ -754,7 +1029,11 @@ class AppBase:
             dist = clamp(math.hypot(dx, dy), abs(L1 - L2) + 1e-3, L1 + L2 - 1e-3)
             c1 = clamp((L1 * L1 + dist * dist - L2 * L2) / (2 * L1 * dist), -1, 1)
             c2 = clamp((L1 * L1 + L2 * L2 - dist * dist) / (2 * L1 * L2), -1, 1)
-            sg = -1 if d.get("flip") else 1
+            keys = dict(getattr(upper, "ik_flip_keys", {}))
+            keys.update(getattr(lower, "ik_flip_keys", {}))
+            earlier = [frame for frame in keys if frame <= f]
+            flipped = keys[max(earlier)] if earlier else d.get("flip", False)
+            sg = -1 if flipped else 1
             if d["role"] == "upper":
                 pr = self.world(upper.parent, f)[3] if upper.parent else 0.0
                 return math.degrees(math.atan2(dy, dx) - sg * math.acos(c1)) - pr
@@ -774,15 +1053,49 @@ class AppBase:
         self.msg(f"IK created: move '{c.name}' and the chain follows")
 
     def flip_ik(self, o):
-        for b in (o, self.find((o.ik or {}).get("other", ""))):
+        pair = (o, self.find((o.ik or {}).get("other", "")))
+        current = bool(o.ik.get("flip", False))
+        earlier = [frame for frame in o.ik_flip_keys if frame <= int(self.frame)]
+        if earlier:
+            current = bool(o.ik_flip_keys[max(earlier)])
+        value = not current
+        for b in pair:
             if b and b.ik:
-                b.ik["flip"] = not b.ik.get("flip", False)
+                b.ik_flip_keys[int(self.frame)] = value
+        self.msg(f"IK bend direction keyed at frame {int(self.frame)}")
 
     def remove_ik(self, o):
         other = self.find((o.ik or {}).get("other", ""))
         o.ik = None
         if other:
             other.ik = None
+
+    def reset_bone_pose(self, mx=0, my=0):
+        """At the playhead, key animated bones and IK targets back to their unanimated base values."""
+        updates, targets = [], {}
+        frame = int(self.frame)
+        for bone in self.objs:
+            if bone.kind != "bone":
+                continue
+            if not bone.ik and bone.keys["rotation"]:
+                updates.append((bone, "rotation", bone.base["rotation"]))
+            if bone.ik:
+                target = self.find(bone.ik.get("target", ""))
+                if target:
+                    targets[id(target)] = target
+        for target in targets.values():
+            for prop in ("x", "y"):
+                if target.keys[prop]:
+                    updates.append((target, prop, target.base[prop]))
+        updates = [(o, prop, value) for o, prop, value in updates
+                   if abs(self.val(o, prop, frame) - value) > 0.05]
+        if not updates:
+            self.msg("The skeleton is already at its base pose at this frame")
+            return
+        self.push_undo()
+        for o, prop, value in updates:
+            o.keys[prop][frame] = value
+        self.msg(f"Reset {len(updates)} skeleton value(s) to the base pose at frame {frame}")
 
     def clamp_ik_target_position(self, target, wx, wy):
         """Keep a dragged IK controller within the maximum reach of its two-bone chain."""
@@ -837,7 +1150,7 @@ class AppBase:
         if o.ik:
             return {"rotation"}                          # driven by the IK solver
         if k == "ctrl":
-            return {"scale", "rotation"}
+            return {"scale"}
         if k == "ctrl_rot":
             return {"x", "y", "scale"}
         if k == "ctrl_posrot":
@@ -864,12 +1177,13 @@ class AppBase:
         f = f or self.frame
         return o.t_in <= f <= (o.t_out or self.total)
 
-    def layer_click(self, o):
+    def layer_click(self, o, order=None):
         """After Effects selection: Shift = range, Ctrl/Cmd = toggle only the clicked layer."""
         m = pygame.key.get_mods()
-        if m & pygame.KMOD_SHIFT and self.sel_anchor in self.objs:
-            a, b = self.objs.index(self.sel_anchor), self.objs.index(o)
-            rng = self.objs[min(a, b):max(a, b) + 1]
+        order = order or self.objs
+        if m & pygame.KMOD_SHIFT and self.sel_anchor in order and o in order:
+            a, b = order.index(self.sel_anchor), order.index(o)
+            rng = order[min(a, b):max(a, b) + 1]
             self.sel = rng if not m & (pygame.KMOD_CTRL | pygame.KMOD_META) else self.sel + [x for x in rng if x not in self.sel]
         elif m & (pygame.KMOD_CTRL | pygame.KMOD_META):
             self.select(o, True)
@@ -1484,6 +1798,10 @@ class AppBase:
         self.loop = not self.loop
         self.msg("Loop playback " + ("on" if self.loop else "off"))
 
+    def toggle_sound(self, mx=0, my=0):
+        self.sound_on = not getattr(self, "sound_on", True)
+        self.msg("Audio " + ("on" if self.sound_on else "off"))
+
     # --------------------------------------------------------------- projects
     def project_file(self):
         return os.path.join(self.project_dir, "project.json") if self.project_dir else None
@@ -1505,8 +1823,17 @@ class AppBase:
             self.msg("No project folder")
             return
         self.save_rasters()
-        data = {"name": self.project_name, "width": self.aw, "height": self.ah, "fps": self.fps,
-                "total": self.total, "art_color": list(self.art_color), "footage": self.footage, "markers": self.markers, "objects": [o.to_dict() for o in self.objs]}
+        self.compositions[self.active_comp] = self.objs
+        self.comp_settings[self.active_comp] = {"width": self.aw, "height": self.ah, "color": list(self.art_color)}
+        main_settings = self.comp_settings.get(self.main_comp, {"width": self.aw, "height": self.ah, "color": list(self.art_color)})
+        data = {"name": self.project_name, "width": main_settings["width"], "height": main_settings["height"], "fps": self.fps,
+                "total": self.total, "art_color": main_settings["color"], "footage": self.footage, "markers": self.markers,
+                "ui": {"preview_quality": self.preview_q, "tool": self.tool},
+                "main_comp": self.main_comp,
+                "objects": [o.to_dict() for o in self.compositions.get(self.main_comp, self.objs)],
+                "compositions": {n: {"owner": self.comp_owners.get(n), "objects": [o.to_dict() for o in items]}
+                                 for n, items in self.compositions.items() if n != self.main_comp},
+                "composition_settings": self.comp_settings}
         with open(self.project_file(), "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=1)
         try:
@@ -1671,6 +1998,28 @@ class AppBase:
         n = len(self.footage)
         self.footage = [f for f in self.footage if f["id"] in used]
         self.msg(f"Removed {n - len(self.footage)} unused footage item(s)")
+
+    def create_project_folder(self):
+        """Create a named folder inside the current project's assets directory."""
+        try:
+            import tkinter.simpledialog as simpledialog
+            name = simpledialog.askstring("New project folder", "Folder name:")
+        except Exception:
+            name = None
+        if not name or not name.strip():
+            return
+        if not self.project_dir:
+            self.msg("Open a project before creating a project folder")
+            return
+        name = os.path.basename(name.strip())
+        path = os.path.join(self.project_dir, "assets", name)
+        try:
+            os.makedirs(path, exist_ok=False)
+            self.msg(f"Created project folder: {name}")
+        except FileExistsError:
+            self.msg("A folder with that name already exists")
+        except OSError as exc:
+            self.msg(f"Could not create folder: {exc}")
 
     def ex_seq_key(self, path):
         stem, ext = os.path.splitext(os.path.basename(path))
@@ -2005,14 +2354,17 @@ class AppBase:
     def save_rasters(self):
         adir = os.path.join(self.project_dir, "assets")
         os.makedirs(adir, exist_ok=True)
-        for o in self.objs:
+        all_objects = [(scene, o) for scene, items in getattr(self, "compositions", {"Main": self.objs}).items() for o in items]
+        for scene, o in all_objects:
             if o.kind == "rlayer" and o.surf is not None:
-                name = re.sub(r"[^A-Za-z0-9_-]+", "_", o.name) + ".png"
+                prefix = "" if scene == self.main_comp else re.sub(r"[^A-Za-z0-9_-]+", "_", scene) + "_"
+                name = prefix + re.sub(r"[^A-Za-z0-9_-]+", "_", o.name) + ".png"
                 pygame.image.save(o.surf, os.path.join(adir, name))
                 o.png = os.path.join("assets", name)
 
     def load_rasters(self):
-        for o in self.objs:
+        all_objects = [o for items in getattr(self, "compositions", {"Main": self.objs}).values() for o in items]
+        for o in all_objects:
             if o.kind == "rlayer":
                 sf = None
                 if o.png:
@@ -2110,8 +2462,9 @@ class AppBase:
 
     # ----------------------------------------------------------- quit / dirty
     def doc_sig(self):
+        comps = {n: [o.to_dict() for o in items] for n, items in getattr(self, "compositions", {}).items() if n != self.main_comp}
         return json.dumps([self.snapshot(), self.footage, list(self.art_color), self.aw, self.ah, self.fps, self.total,
-                           self.markers], sort_keys=True, default=str)
+                           self.markers, comps, self.comp_settings], sort_keys=True, default=str)
 
     def guard(self, action):
         """Run action, but first ask what to do with unsaved changes."""
@@ -2171,7 +2524,15 @@ class AppBase:
             with open(os.path.join(DATA_DIR, "prefs.json"), encoding="utf-8") as fh:
                 d = json.load(fh)
             if len(d.get("label_list", [])) == len(self.label_list):
-                self.label_list = [[n, tuple(c)] for n, c in d["label_list"]]
+                saved_labels = [[n, tuple(c)] for n, c in d["label_list"]]
+                old_default_colors = [(131, 86, 193), (255, 107, 125), (255, 251, 246), (173, 236, 230),
+                                      (67, 7, 20), (255, 74, 79), (255, 215, 111), (42, 157, 240),
+                                      (36, 12, 48), (180, 123, 101), (239, 171, 200), (255, 188, 63),
+                                      (64, 40, 40), (0, 133, 122), (75, 38, 110), (96, 110, 130)]
+                if [c for _, c in saved_labels] == old_default_colors:
+                    self.label_list = [[n, c] for n, c in LABEL_DEFAULT_LIST]
+                else:
+                    self.label_list = saved_labels
             self.type_label.update({k: v for k, v in d.get("type_label", {}).items() if k in self.type_label})
             self.autosave.update(d.get("autosave", {}))
             self.theme = d.get("theme", "Dark") if d.get("theme", "Dark") in THEMES else "Dark"
@@ -2181,6 +2542,15 @@ class AppBase:
                                 else {"c": tuple(c["c"]), "name": c.get("name", ""), "folder": c.get("folder")} for c in d["palette"]]
             self.pal_folders = list(d.get("pal_folders", []))
             self.pal_view = d.get("pal_view", "circles") if d.get("pal_view") in ("circles", "tiles", "list") else "circles"
+            self.workspace_presets = d.get("workspace_presets", {}) if isinstance(d.get("workspace_presets", {}), dict) else {}
+            default_workspace = d.get("default_workspace", "Drawing")
+            if default_workspace not in WORKSPACES:
+                default_workspace = "Drawing"
+            self.default_workspace = default_workspace
+            if default_workspace in self.workspace_presets:
+                self.apply_workspace_state(self.workspace_presets[default_workspace])
+            else:
+                self.workspace = default_workspace
             self.labels_sync()
         except Exception:  # noqa
             pass
@@ -2190,7 +2560,9 @@ class AppBase:
             with open(os.path.join(DATA_DIR, "prefs.json"), "w", encoding="utf-8") as fh:
                 json.dump({"label_list": self.label_list, "type_label": self.type_label, "palette": self.palette,
                            "pal_folders": self.pal_folders, "pal_view": self.pal_view,
-                           "autosave": self.autosave, "theme": self.theme}, fh, indent=1)
+                           "autosave": self.autosave, "theme": self.theme,
+                           "workspace_presets": self.workspace_presets,
+                           "default_workspace": self.default_workspace}, fh, indent=1)
         except OSError:
             pass
 
@@ -2225,6 +2597,8 @@ class AppBase:
 
     @staticmethod
     def label_key(o):
+        if o.kind == "comp":
+            return "comp"
         if o.kind in ("brush", "rlayer"):
             return "brush"
         if o.kind == "null":
@@ -2240,6 +2614,11 @@ class AppBase:
     def label_color(self, o):
         o = o.owner or o
         return o.label or self.labels[self.label_key(o)]
+
+    def display_label_color(self, o):
+        color = self.label_color(o)
+        layer = o.owner or o
+        return color if layer in self.sel else shade(color, 0.55)
 
     # ------------------------------------------------------------- undo / redo
     def snapshot(self):
@@ -2357,11 +2736,74 @@ class AppBase:
             return False
         self.project_dir, self.project_name = d, data.get("name", os.path.basename(d))
         self.aw, self.ah = data.get("width", 1920), data.get("height", 1080)
+        old_label_colors = [(131, 86, 193), (255, 107, 125), (255, 251, 246), (173, 236, 230),
+                            (67, 7, 20), (255, 74, 79), (255, 215, 111), (42, 157, 240),
+                            (36, 12, 48), (180, 123, 101), (239, 171, 200), (255, 188, 63),
+                            (64, 40, 40), (0, 133, 122), (75, 38, 110), (96, 110, 130)]
+        new_label_colors = [tuple(c) for _, c in LABEL_DEFAULT_LIST]
+        for layer in objs:
+            for item in [layer] + list(getattr(layer, "items", [])):
+                if item.label is not None:
+                    try:
+                        prior = tuple(item.label)
+                        if prior in old_label_colors:
+                            item.label = new_label_colors[old_label_colors.index(prior)]
+                    except TypeError:
+                        pass
         self.fps, self.total = data.get("fps", 24), data.get("total", 72)
         self.art_color = tuple(data.get("art_color", COLOR_ARTBOARD))
         self.markers = data.get("markers", [])
         self.footage, self.foot_sel, self.img_cache, self.scaled_cache = data.get("footage", []), None, {}, {}
         self.objs, self.sel, self.frame = objs, [], 1
+        main_name = data.get("main_comp", "Main")
+        self.main_comp = main_name
+        self.compositions, self.active_comp, self.comp_owners = {main_name: objs}, main_name, {}
+        for name, comp_data in data.get("compositions", {}).items():
+            inner = [Obj.from_dict(d) for d in comp_data.get("objects", [])]
+            by_inner = {o.name: o for o in inner}
+            for obj, obj_data in zip(inner, comp_data.get("objects", [])):
+                obj.parent = by_inner.get(obj_data.get("parent"))
+            self.compositions[name] = inner
+            owner = comp_data.get("owner")
+            if owner:
+                self.comp_owners[name] = tuple(owner)
+        for name, items in self.compositions.items():
+            if name == self.main_comp:
+                continue
+            for layer in items:
+                if layer.label is not None:
+                    try:
+                        prior = tuple(layer.label)
+                        if prior in old_label_colors:
+                            layer.label = new_label_colors[old_label_colors.index(prior)]
+                    except TypeError:
+                        pass
+        for scene, items in self.compositions.items():
+            for obj in items:
+                if obj.comp_ref and obj.comp_ref in self.compositions:
+                    for child in self.compositions[obj.comp_ref]:
+                        if child.parent is None:
+                            child.parent = obj
+        self.comp_settings = data.get("composition_settings", {})
+        self.comp_settings.setdefault(self.main_comp, {"width": self.aw, "height": self.ah, "color": list(self.art_color)})
+        for name in self.compositions:
+            self.comp_settings.setdefault(name, {"width": self.aw, "height": self.ah, "color": list(self.art_color)})
+        main_settings = self.comp_settings[self.main_comp]
+        self.aw, self.ah = int(main_settings["width"]), int(main_settings["height"])
+        self.art_color = tuple(main_settings["color"])
+        seen_num = set()
+        next_num = 1
+        display_order = [row[1] for row in self.tl_rows() if row[0] == "o"]
+        display_order.extend(obj for obj in objs if obj not in display_order)
+        for obj in display_order:
+            if obj.layer_num is None or obj.layer_num in seen_num:
+                while next_num in seen_num:
+                    next_num += 1
+                obj.layer_num = next_num
+            seen_num.add(obj.layer_num)
+            next_num = max(next_num, obj.layer_num + 1)
+        self.preview_q = data.get("ui", {}).get("preview_quality", 1)
+        self.set_tool(data.get("ui", {}).get("tool", "animate"))
         self.load_rasters()
         self.enter_main()
         return True
@@ -2436,6 +2878,7 @@ class AppBase:
     def lib_insert(self, i, at=None):
         o = Obj.from_dict(self.library[i])
         o.name, o.node = self.unique_name(o.name), None
+        self.assign_layer_number(o, fresh=True)
         if at is not None and not o.keys["x"] and not o.keys["y"]:           # dropped in the viewer: where the mouse let go
             o.base["x"], o.base["y"] = float(at[0]), float(at[1])
         self.objs.insert(0, o)
@@ -2534,16 +2977,55 @@ class AppBase:
             self.pal_open = name
             self.save_prefs()
 
+    def open_palette_folder(self, folder):
+        self.pal_open, self.pal_sel = folder, set()
+
     def pal_menu(self, i, pos):
         e = self.palette[i]
-        items = [("Rename", lambda: self.begin_edit(f"palname_{i}", e["name"], lambda s, e=e: (e.update(name=s.strip()), self.save_prefs())))]
+        items = [("Copy colour(s)", lambda: self.copy_palette_colours(i)),
+                 ("Cut colour(s)", lambda: self.cut_palette_colour(i)),
+                 ("Paste colour(s) into this group", lambda: self.paste_palette_colours(e.get("folder")))]
+        items += [("Rename", lambda: self.begin_edit(f"palname_{i}", e["name"], lambda s, e=e: (e.update(name=s.strip()), self.save_prefs())))]
         items += [(f"Move to folder: {f}", (lambda f=f: (e.update(folder=f), self.save_prefs()))) for f in self.pal_folders]
         items += [("Move out of its folder", lambda: (e.update(folder=None), self.save_prefs())),
-                  ("Delete colour", lambda: (self.palette.pop(i), self.save_prefs()))]
+                  ("Delete colour", lambda: self.delete_palette_at(i))]
         self.ctx = {"pos": pos, "items": items}
+
+    def cut_palette_colour(self, i):
+        ids = sorted((self.pal_sel if i in self.pal_sel else {i}), reverse=True)
+        self.pal_clipboard = [dict(self.palette[n]) for n in reversed(ids) if 0 <= n < len(self.palette)]
+        for n in ids:
+            if 0 <= n < len(self.palette):
+                self.palette.pop(n)
+        self.pal_active, self.pal_sel = None, set()
+        self.save_prefs()
+
+    def copy_palette_colours(self, i):
+        ids = sorted(self.pal_sel if i in self.pal_sel else {i})
+        self.pal_clipboard = [dict(self.palette[n]) for n in ids if 0 <= n < len(self.palette)]
+
+    def delete_palette_at(self, i):
+        self.pal_sel = {i}
+        self.delete_palette_colour()
+
+    def add_palette_colour(self):
+        self.palette.append({"c": tuple(self.color_get("fill")[0]), "name": "", "folder": self.pal_open})
+        self.pal_active = len(self.palette) - 1
+        self.pal_sel = {self.pal_active}
+        self.save_prefs()
+
+    def paste_palette_colours(self, folder):
+        if self.pal_clipboard:
+            for item in self.pal_clipboard:
+                self.palette.append({**item, "c": tuple(item["c"]), "folder": folder})
+            self.pal_active = len(self.palette) - 1
+            self.pal_sel = set(range(len(self.palette) - len(self.pal_clipboard), len(self.palette)))
+            self.save_prefs()
 
     def pal_folder_menu(self, f, pos):
         def delete():
+            if f is None:
+                return
             self.pal_folders.remove(f)
             for e in self.palette:
                 if e["folder"] == f:
@@ -2551,7 +3033,10 @@ class AppBase:
             if self.pal_open == f:
                 self.pal_open = None
             self.save_prefs()
-        self.ctx = {"pos": pos, "items": [("Delete folder (colours stay in the palette)", delete)]}
+        items = [("Paste colour here", lambda: self.paste_palette_colours(f))]
+        if f is not None:
+            items.append(("Delete folder (colours stay in the palette)", delete))
+        self.ctx = {"pos": pos, "items": items}
 
     def run_script(self, path):
         try:
@@ -2605,8 +3090,8 @@ class AppBase:
         self.r_menu = pygame.Rect(0, 0, W, 32)
         self.r_bar = pygame.Rect(0, H - BAR, W, BAR)
         self.r_tl = pygame.Rect(0, tl_top, W, TL)
-        ph = max(160, tl_top - (8 if TL else 0) - 32 - 8 - TOP)
-        tw = 0 if "toolbox" in hid else 56
+        ph = max(160, tl_top - (8 if TL else 0) - 40 - 8 - TOP)
+        tw = 0 if "toolbox" in hid else 42
         self.r_tool = pygame.Rect(0, TOP, tw, max(0, tl_top - TOP))
         lw = 0 if "left" in hid else int(clamp(self.w_left, 160, 400))
         self.r_left = pygame.Rect(tw + 8 if tw else 8, TOP, lw, ph)
@@ -2614,12 +3099,13 @@ class AppBase:
         self.r_right = pygame.Rect(W - 8 - wr, TOP, wr, ph)
         mx = self.r_left.right + (8 if lw else 0)
         main = pygame.Rect(mx, TOP, max(200, self.r_right.x - (8 if wr else 0) - mx), ph)
-        self.r_trans = pygame.Rect(mx, TOP + ph + 8, main.w, 32)
+        self.r_trans = pygame.Rect(0, TOP + ph + 8, W, 40)
         self.r_aux = None
         if self.workspace == "Animate":
             self.r_view = main
         else:
-            half = int(clamp(int((main.w - 8) * self.split_frac) // 8 * 8, 160, max(160, main.w - 8 - 160)))
+            split = 0.72 if self.workspace == "Drawing" else self.split_frac
+            half = int(clamp(int((main.w - 8) * split) // 8 * 8, 160, max(160, main.w - 8 - 160)))
             self.r_view = pygame.Rect(main.x, TOP, half, ph)
             self.r_aux = pygame.Rect(self.r_view.right + 8, TOP, main.w - half - 8, ph)
         if self.maxi == "timeline" and TL:
@@ -2714,7 +3200,12 @@ class AppBase:
 
     def icon_button(self, rect, icon, fn, active=False, hint=None, col=(235, 235, 235)):
         rc = self.flat_button(rect, fn, hint, active)
-        draw_icon(self.screen, icon, rc, col)
+        aliases = {"first": "go_to_first_frame", "prev": "previous_frame", "next": "next_frame",
+                   "last": "go_to_last_frame", "loop": "loop_playback", "chev_l": "previous_keyframe",
+                   "chev_r": "next_keyframe", "key": "set_keyframe", "sound_off": "sound_off_active"}
+        state = "active" if active else ("hover" if self.hovering(rc) else "default")
+        if not draw_ui_icon(self.screen, aliases.get(icon, icon), rc, col, state):
+            draw_icon(self.screen, icon, rc, col)
         return rc
 
     def checkbox(self, x, y, on, fn, hint=None):
@@ -2729,10 +3220,10 @@ class AppBase:
         self.hit(rc.inflate(8, 8), fn)
         return rc
 
-    def field(self, rect, text, cb, fid, numeric=False, center=False, hint=None):
+    def field(self, rect, text, cb, fid, numeric=False, center=False, hint=None, field_color=COLOR_FIELD):
         rect = pygame.Rect(rect)
         editing = bool(self.edit and self.edit["id"] == fid)
-        self.rrect(rect, COLOR_FIELD, rect.h // 2)
+        self.rrect(rect, field_color, rect.h // 2)
         if editing:
             self.edit["rect"] = rect
             self.rrect(rect, COLOR_ACCENT_L, rect.h // 2, 1)
@@ -2878,8 +3369,16 @@ class AppBase:
                        "sel": 0 if files else -1, "scroll": 0, "ok": ok_label, "cb": cb, "info": False}
 
     def open_info(self, title, lines):
+        shortcut_rows = None
+        if title == "KEYBOARD SHORTCUTS":
+            shortcut_rows = [(pygame.key.name(k).upper(), TOOL_INFO[t][0]) for k, t in sorted(KEYMAP.items())]
+            shortcut_rows += [(key, desc) for key, desc in (("SPACE", "Play / pause"), ("K", "Set or remove keyframe"),
+                             ("LEFT / RIGHT", "Step frames"), ("HOME", "Fit viewer"), ("I / O", "Set work area in / out"),
+                             ("CTRL + S", "Save project"), ("CTRL + Z", "Undo"), ("CTRL + SHIFT + Z", "Redo"),
+                             ("CTRL + D", "Duplicate selection"), ("CTRL + G", "Group selection"), ("CTRL + M", "Render"),
+                             ("TAB", "Toggle fullscreen"))]
         self.dialog = {"title": title, "sub": "", "files": lines, "folder": "", "dirs": False, "sel": -1,
-                       "scroll": 0, "ok": "Close", "cb": None, "info": True}
+                       "scroll": 0, "ok": "Close", "cb": None, "info": True, "shortcut_rows": shortcut_rows}
 
     def dialog_ok(self, mx=0, my=0):
         d = self.dialog
@@ -2893,6 +3392,9 @@ class AppBase:
 
     def draw_dialog(self):
         d = self.dialog
+        if d.get("shortcut_rows") is not None:
+            self.draw_shortcut_map(d)
+            return
         ov = pygame.Surface((self.W, self.H), pygame.SRCALPHA)
         ov.fill((0, 0, 0, 150))
         self.screen.blit(ov, (0, 0))
@@ -2926,6 +3428,38 @@ class AppBase:
                         lambda mx, my: setattr(self, "dialog", None), radius=16)
         self.button((box.right - 104, box.bottom - 48, 88, 32), d["ok"], self.dialog_ok, color=COLOR_ACCENT_L,
                     radius=16)
+
+    def draw_shortcut_map(self, d):
+        rows = d["shortcut_rows"]
+        width = min(760, self.W - 40)
+        num_rows = max(1, (len(rows) + 1) // 2)
+        height = min(self.H - 40, max(280, 146 + num_rows * 30))
+        row_h = min(30, max(18, (height - 146) / num_rows))
+        box = pygame.Rect(0, 0, width, height)
+        box.center = (self.W // 2, self.H // 2)
+        veil = pygame.Surface((self.W, self.H), pygame.SRCALPHA)
+        veil.fill((0, 0, 0, 150))
+        self.screen.blit(veil, (0, 0))
+        self.hits = []
+        self.hit((0, 0, self.W, self.H), lambda mx, my: None)
+        self.hit(box, lambda mx, my: None)
+        self.rrect(box, (32, 34, 40), 16)
+        self.rrect(box, (70, 70, 78), 16, 1)
+        self.txt(d["title"], box.x + 20, box.y + 18, self.fb2)
+        self.txt("Current keyboard shortcuts", box.x + 20, box.y + 48, self.f11, COLOR_MUTED)
+        colw = (box.w - 40) // 2
+        y0 = box.y + 80
+        for i, (key, desc) in enumerate(rows):
+            col, row = divmod(i, num_rows)
+            x, y = box.x + 20 + col * colw, int(y0 + row * row_h)
+            capw = min(max(58, self.f11.size(key)[0] + 20), colw - 190)
+            cap = pygame.Rect(x, y, capw, max(16, int(row_h) - 4))
+            self.rrect(cap, (48, 50, 58), 6)
+            self.rrect(cap, (92, 94, 104), 6, 1)
+            self.txt(key, cap.centerx, cap.centery, self.fb, COLOR_TEXT, center=True)
+            self.txt(desc, x + capw + 10, cap.centery - 6, self.f11, COLOR_TEXT)
+        close = pygame.Rect(box.right - 116, box.bottom - 42, 96, 28)
+        self.button(close, "Close", self.dialog_ok, color=COLOR_ACCENT_L, radius=14, font=self.f11)
 
     # ------------------------------------------------------------------ events
     def click(self, pos, button):
@@ -2961,6 +3495,11 @@ class AppBase:
             self.eyedrop = False
             self.picker_set_rgb(tuple(self.screen.get_at(pos))[:3], self.eyedrop_p)
             return
+        if button == 1 and self.mode == "main" and self.tool == "hand" and self.r_view.collidepoint(pos):
+            view_icons = pygame.Rect(self.r_view.right - 8 - 36 * 7 + 4, self.r_view.y + 8, 36 * 7, 32)
+            if not view_icons.collidepoint(pos):
+                self.drag = self.start_pan(*pos)
+                return
         self.drag = self.drag_end = None
         for rect, fn, buttons in reversed(self.hits):
             if button in buttons and rect.collidepoint(pos):
@@ -3003,7 +3542,9 @@ class AppBase:
             self.nd_wheel(dy, pos)
         elif self.r_aux and self.workspace == "Drawing" and self.r_aux.collidepoint(pos):
             if self.drawing_tab == "Colors":                                # each tab scrolls on its own
-                if self.pal_area.collidepoint(pos):
+                if self.drawing_max:
+                    self.drawing_scroll = clamp(self.drawing_scroll - dy * 40, 0, self.drawing_max)
+                elif self.pal_area.collidepoint(pos):
                     self.pal_scroll = clamp(self.pal_scroll - dy * 40, 0, self.pal_max)
             else:
                 self.lvl_scroll = clamp(self.lvl_scroll - dy * 40, 0, self.lvl_max)
@@ -3015,7 +3556,7 @@ class AppBase:
         elif self.r_left.w and self.r_left.collidepoint(pos) and self.left_tab == "Footage":
             self.foot_scroll = int(clamp(self.foot_scroll - dy, 0, max(0, len(self.footage) - 6)))
         elif self.r_right.w and self.r_right.collidepoint(pos) and self.right_tab == "Properties":
-            self.right_scroll = clamp(self.right_scroll - dy * 40, 0, self.right_max)
+            self.right_scroll = clamp(self.right_scroll - dy * 64, 0, self.right_max)
         elif self.r_right.collidepoint(pos) and self.right_tab == "Library":
             if self.lib_mode == "Explorer":
                 self.ex_scroll = int(clamp(self.ex_scroll - dy, 0, max(0, self.ex_n - 8)))
@@ -3097,7 +3638,10 @@ class AppBase:
             self.dialog, self.link_mode, self.menu_open, self.ctx = None, False, None, None
             self.bone_chain, self.layer_dlg, self.render_dlg, self.quit_dlg, self.marker_dlg = False, False, None, None, None
             self.replace_target, self.seq_dlg, self.rename_dlg, self.prefs_open = None, None, None, False
-            self.picker, self.flyout, self.eyedrop = None, None, False
+            self.picker, self.flyout, self.eyedrop, self.comp_dlg = None, None, False, None
+            return
+        if k == pygame.K_TAB and not ctrl:
+            self.toggle_fullscreen()
             return
         if self.dialog or self.mode != "main":
             return
@@ -3106,6 +3650,10 @@ class AppBase:
             self.redo() if mods & pygame.KMOD_SHIFT else self.undo()
         elif ctrl and k == pygame.K_y:
             self.redo()
+        elif ctrl and k == pygame.K_n:
+            self.open_new_comp()
+        elif ctrl and k == pygame.K_k:
+            self.open_edit_comp()
         elif k == pygame.K_BACKQUOTE:
             pos = pygame.mouse.get_pos()
             if self.maxi:
@@ -3133,7 +3681,7 @@ class AppBase:
         elif k == pygame.K_d and not ctrl:
             self.default_colors()
         elif k == pygame.K_x and not ctrl:
-            self.swap_colors()
+            self.swap_colors() if mods & pygame.KMOD_SHIFT else self.set_tool("bone_anim")
         elif k in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET) and (mods & pygame.KMOD_ALT):
             self.trim_at_playhead(k == pygame.K_RIGHTBRACKET)        # Alt+[ keeps the part right of the playhead, Alt+] the part left of it
         elif k in (pygame.K_DELETE, pygame.K_BACKSPACE) and self.frame_mode and self.fr_sel and self.r_tl.collidepoint(pos):
@@ -3208,8 +3756,8 @@ class AppBase:
             self.start_replace(self.foot_sel)
         elif k == pygame.K_t and not ctrl and self.kf_sel and self.r_tl.collidepoint(pos):
             self.ease_pop = {"pos": pos}                                # T on selected keyframes: pick a curve from small pictures
-        elif not ctrl and k in (pygame.K_x, pygame.K_s):
-            self.set_tool("bone_anim" if k == pygame.K_x else "bone")
+        elif not ctrl and k == pygame.K_s:
+            self.set_tool("bone")
         elif not ctrl and (k == pygame.K_p or (k in (pygame.K_r, pygame.K_t, pygame.K_e, pygame.K_l)
                                                and self.r_tl.collidepoint(pygame.mouse.get_pos()))):      # P = Position values everywhere; R / T / S over the timeline
             m = {pygame.K_p: ("x", "y"), pygame.K_r: ("rotation",), pygame.K_t: ("opacity",), pygame.K_s: ("scale",)}
@@ -3398,6 +3946,7 @@ class AppBase:
         self.draw_rename_dlg()
         self.draw_render_dlg()
         self.draw_marker_dlg()
+        self.draw_comp_dialog()
         self.draw_picker()
         self.draw_flyout()
         self.draw_menu_dropdown()
@@ -3423,23 +3972,25 @@ class AppBase:
         def bottom(mx, my):
             self.h_tl = clamp(self.H - 24 - (my + 4), 96, 400)
         specs = []
-        if self.r_aux:                                       # bar between the viewer and the panel next to it
+        if self.r_aux and self.workspace != "Drawing":       # Drawing keeps the reference proportions fixed
             def mid(mx, my):
                 self.split_frac = clamp((mx - self.r_view.x) / max(1, self.r_aux.right - self.r_view.x - 8), 0.15, 0.85)
             specs.append((pygame.Rect(self.r_view.right, TOP, 8, ph), "sizewe", mid))
-        if self.r_left.w:
+        if self.r_left.w and self.workspace != "Drawing":
             specs.append((pygame.Rect(self.r_left.right, TOP, 8, ph), "sizewe", left))
-        if self.r_right.w:
+        if self.r_right.w and self.workspace != "Drawing":
             specs.append((pygame.Rect(self.r_right.x - 8, TOP, 8, ph), "sizewe", right))
         if self.r_tl.h and not self.maxi:
             specs.append((pygame.Rect(0, self.r_tl.y - 8, self.W, 8), "sizens", bottom))
         self.splitters = []
         for rc, kind, fn in specs:
             self.splitters.append((rc, kind))
-            if self.hovering(rc) or (self.drag is fn):
-                bar = pygame.Rect(0, 0, 4, 48) if kind == "sizewe" else pygame.Rect(0, 0, 48, 4)
-                bar.center = rc.center
-                self.rrect(bar, COLOR_HOVER, 2)
+            active = self.hovering(rc) or (self.drag is fn)
+            if kind == "sizewe":
+                edge = pygame.Rect(rc.centerx - (1 if active else 0), rc.y, 2 if active else 1, rc.h)
+            else:
+                edge = pygame.Rect(rc.x, rc.centery - (1 if active else 0), rc.w, 2 if active else 1)
+            self.screen.fill(COLOR_ACCENT if active else (48, 51, 66), edge)
             self.hit(rc, lambda mx, my, fn=fn: fn)
 
     def draw_frame(self):
